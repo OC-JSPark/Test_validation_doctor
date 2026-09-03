@@ -1,0 +1,39 @@
+# ---------- 비밀값 / 환경변수 ----------
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+
+# ---------- DB 덤프 (개인정보 포함, 커밋 금지) ----------
+# 단, sql/ 아래 마이그레이션 스크립트는 커밋한다
+*.sql
+!sql/*.sql
+
+# ---------- 문서 (README.md 만 커밋) ----------
+*.md
+!README.md
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# uv / venv  (uv.lock 은 커밋한다)
+.venv/
+venv/
+
+# ---------- 테스트 / 캐시 ----------
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.ruff_cache/
+.mypy_cache/
+
+# ---------- 에디터 / OS ----------
+.vscode/
+.idea/
+*.swp
+.DS_Store
