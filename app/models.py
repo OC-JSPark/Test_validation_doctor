@@ -1,0 +1,92 @@
+"""도메인 모델 (dataclass).
+
+DB 행과 외부 API 응답을 그대로 dict 로 들고 다니지 않기 위한 얇은 레이어.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime
+
+ROLE_ADMIN = "ADMIN"
+ROLE_DOCTOR = "DOCTOR"
+
+STATUS_PENDING = "PENDING"
+STATUS_IN_PROGRESS = "IN_PROGRESS"
+STATUS_COMPLETED = "COMPLETED"
+
+
+@dataclass(frozen=True)
+class User:
+    user_id: str
+    name: str
+    role: str
+
+    @property
+    def is_admin(self) -> bool:
+        return self.role == ROLE_ADMIN
+
+
+@dataclass(frozen=True)
+class QATurn:
+    """외부 API 대화에서 파싱한 Q&A 한 쌍 (SPEC.md §3)."""
+
+    turn_index: int
+    ai_question: str
+    user_answer: str
+    date: str | None = None
+
+
+@dataclass
+class Assignment:
+    id: int
+    doctor_id: str
+    student_id: str
+    session_id: str
+    chat_date: str
+    total_turns: int
+    completed_turns: int
+    status: str
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    completed_at: datetime | None = None
+    doctor_name: str | None = None
+
+    @property
+    def is_completed(self) -> bool:
+        return self.status == STATUS_COMPLETED
+
+    @property
+    def progress_pct(self) -> float:
+        """진행률(%). 전체 턴 수를 모르면 0."""
+        if self.total_turns <= 0:
+            return 0.0
+        return round(self.completed_turns / self.total_turns * 100, 1)
+
+
+@dataclass
+class Evaluation:
+    """doctor_evaluations 한 행 = 한 턴의 Q&A + 전문의 평가."""
+
+    assignment_id: int
+    turn_index: int
+    evaluation_code: str | None = None
+    scale_stage: str | None = None
+    ai_question: str | None = None
+    user_answer: str | None = None
+    doctor_score: str | None = None
+    doctor_opinion: str | None = None
+    id: int | None = None
+    updated_at: datetime | None = None
+
+    @property
+    def is_filled(self) -> bool:
+        """점수와 판단 이유가 모두 채워졌으면 '완료된 턴'으로 센다."""
+        return bool((self.doctor_score or "").strip()) and bool(
+            (self.doctor_opinion or "").strip()
+        )
+
+
+def build_evaluation_code(assignment_id: int, turn_index: int) -> str:
+    """평가 ID 생성 (SPEC 예시 'KID-001' 형식을 턴 단위로 확장)."""
+    return f"KID-{assignment_id:03d}-{turn_index:02d}"
