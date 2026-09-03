@@ -31,15 +31,32 @@ docker compose up -d test-db
 docker exec local-postgres psql -U aimieapi -d postgres -c "CREATE DATABASE validation_db"
 
 # 3) 환경변수 준비
-cp .env.example .env   # 외부 API 토큰/계정을 채운다
+cp .env.example .env   # 외부 API 계정(EXTERNAL_API_LOGIN_ID/PASSWORD)을 채운다
 
 # 4) 의존성 설치 + 스키마 + 데모 계정
 uv sync
 uv run python -m scripts.init_db --seed
 
-# 5) 앱 실행
+# 5) 외부 API 연동 점검 (로그인 → 대화 조회 → 턴 파싱)
+uv run python -m scripts.check_api --student <studentId> --date 26.08.31
+
+# 6) 앱 실행
 uv run streamlit run Test_validation_doctor.py
 ```
+
+### 외부 API 접속 정보
+
+| 항목 | 값 |
+| --- | --- |
+| 호스트 | `https://admin-dev.aimie-m.com` |
+| 로그인 | `POST /api-kids/adm/login` (`loginType: TEACHER`) |
+| 대화 조회 | `GET /api-kids/risk-students/student/chat` (Bearer 토큰) |
+
+앱은 토큰이 없으면 `.env` 의 `EXTERNAL_API_LOGIN_ID` / `EXTERNAL_API_PASSWORD` 로
+자동 로그인해 `accessToken` 을 받아 사용한다.
+게이트웨이 프리픽스가 바뀌면 `EXTERNAL_API_LOGIN_PATH` / `EXTERNAL_API_CHAT_PATH` 로 조정한다.
+
+> `dev.aimie-m.com` 은 nginx 테스트 페이지만 떠 있어 모든 API 경로가 404 다. `admin-dev` 를 쓸 것.
 
 데모 계정: `admin / admin1234`, `doctor01~03 / doctor1234`
 (비밀번호는 `.env` 의 `SEED_ADMIN_PASSWORD`, `SEED_DOCTOR_PASSWORD` 로 바꿀 수 있다.)
