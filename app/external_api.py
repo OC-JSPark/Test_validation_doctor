@@ -10,12 +10,13 @@ from typing import Any
 
 import requests
 
-from app.config import Settings, get_settings
+from app.config import DEFAULT_CHAT_PATH, DEFAULT_LOGIN_PATH, Settings, get_settings
 from app.models import QATurn
 from app.parsing import parse_chat_payload
 
-CHAT_PATH = "/api-kids/risk-students/student/chat"
-LOGIN_PATH = "/api-kids/adm/login"
+# 기본 경로. 실제 사용 경로는 Settings 에서 읽으며 환경변수로 덮어쓸 수 있다.
+CHAT_PATH = DEFAULT_CHAT_PATH
+LOGIN_PATH = DEFAULT_LOGIN_PATH
 
 
 class ExternalAPIError(RuntimeError):
@@ -45,18 +46,22 @@ class ChatAPIClient:
         self.session = session or requests.Session()
 
     # --- 인증 -------------------------------------------------------------
-    def login(self, login_id: str, password: str, *, login_type: str = "TEACHER") -> str:
-        """외부 관리자 계정으로 로그인해 accessToken 을 확보한다."""
+    def login(self, login_id: str, password: str, *, login_type: str | None = None) -> str:
+        """POST {login_path} 로 로그인해 accessToken 을 확보한다.
+
+        토큰은 인스턴스에 보관되어 이후 대화 조회에 Bearer 로 붙는다.
+        """
         payload = {
-            "loginType": login_type,
+            "loginType": login_type or self.settings.api_login_type,
             "loginId": login_id,
             "password": password,
             "rememberMe": False,
         }
-        body = self._request("POST", LOGIN_PATH, json=payload)
+        body = self._request("POST", self.settings.api_login_path, json=payload)
         token = body.get("accessToken")
         if not token:
-            raise ExternalAPIError("외부 API 로그인 응답에 accessToken 이 없습니다.")
+            result = body.get("result") or body.get("message") or "(응답에 사유 없음)"
+            raise ExternalAPIError(f"로그인 응답에 accessToken 이 없습니다: {result}")
         self.token = token
         return token
 
@@ -79,7 +84,7 @@ class ChatAPIClient:
         if session_id:
             params["sessionId"] = session_id
         self.ensure_token()
-        return self._request("GET", CHAT_PATH, params=params)
+        return self._request("GET", self.settings.api_chat_path, params=params)
 
     def fetch_turns(
         self, student_id: str, *, date: str | None = None, session_id: str | None = None
@@ -110,8 +115,17 @@ class ChatAPIClient:
             raise ExternalAPIError(f"외부 API 연결 실패: {exc}") from exc
 
         if response.status_code >= 400:
+            # 원인별로 손볼 곳이 달라서 힌트를 붙여 준다.
+            hint = {
+                401: " → 토큰이 만료됐거나 로그인 정보가 틀렸습니다.",
+                403: " → 이 계정에 조회 권한이 없습니다.",
+                404: f" → 경로 '{path}' 가 서버에 없습니다. EXTERNAL_API_BASE_URL /"
+                " EXTERNAL_API_LOGIN_PATH / EXTERNAL_API_CHAT_PATH 를 확인하세요.",
+                502: " → 게이트웨이 뒤의 백엔드가 응답하지 않습니다 (서버 점검/다운).",
+                504: " → 백엔드 응답이 지연되고 있습니다.",
+            }.get(response.status_code, "")
             raise ExternalAPIError(
-                f"외부 API 오류 ({response.status_code}): {response.text[:200]}",
+                f"외부 API 오류 ({response.status_code}){hint} {response.text[:200]}",
                 status_code=response.status_code,
             )
         try:

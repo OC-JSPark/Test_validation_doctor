@@ -16,7 +16,11 @@ load_dotenv(override=False)
 # 신규 로컬 DB 기본 접속 문자열 (docker-compose.yml 의 test-db 기준).
 # 기존 서비스 DB(aimie_kids_app / aimie_kids_ai) 와 분리된 별도 데이터베이스다.
 DEFAULT_DATABASE_URL = "postgresql://aimieapi:aimieapi@localhost:15432/validation_db"
-DEFAULT_API_BASE_URL = "https://dev.aimie-m.com"
+DEFAULT_API_BASE_URL = "https://admin-dev.aimie-m.com"
+
+# 외부 API 경로. 게이트웨이 프리픽스가 환경마다 달라질 수 있어 환경변수로 덮어쓸 수 있게 둔다.
+DEFAULT_LOGIN_PATH = "/api-kids/adm/login"
+DEFAULT_CHAT_PATH = "/api-kids/risk-students/student/chat"
 
 # 전문의 점수/조치 선택지. 실제 척도가 확정되면 .env 의 DOCTOR_SCORE_OPTIONS 로 덮어쓴다.
 DEFAULT_SCORE_OPTIONS = (
@@ -53,6 +57,9 @@ class Settings:
     api_timeout: float
     score_options: tuple[str, ...]
     scale_stages: tuple[str, ...]
+    api_login_path: str = DEFAULT_LOGIN_PATH
+    api_chat_path: str = DEFAULT_CHAT_PATH
+    api_login_type: str = "TEACHER"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -67,6 +74,9 @@ class Settings:
             api_timeout=float(os.getenv("EXTERNAL_API_TIMEOUT", "10")),
             score_options=_split(os.getenv("DOCTOR_SCORE_OPTIONS"), DEFAULT_SCORE_OPTIONS),
             scale_stages=_split(os.getenv("SCALE_STAGE_OPTIONS"), DEFAULT_SCALE_STAGES),
+            api_login_path=os.getenv("EXTERNAL_API_LOGIN_PATH") or DEFAULT_LOGIN_PATH,
+            api_chat_path=os.getenv("EXTERNAL_API_CHAT_PATH") or DEFAULT_CHAT_PATH,
+            api_login_type=os.getenv("EXTERNAL_API_LOGIN_TYPE") or "TEACHER",
         )
 
 

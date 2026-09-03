@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 import responses
 
@@ -133,3 +135,48 @@ def test_연결_실패는_ExternalAPIError_로_감싼다(settings):
     # 등록된 응답이 없으면 responses 가 ConnectionError 를 낸다.
     with pytest.raises(ExternalAPIError, match="연결 실패"):
         ChatAPIClient(settings, token="tok").fetch_chat("student-1")
+
+
+@responses.activate
+def test_404_오류에_경로_확인_힌트가_붙는다(settings):
+    """게이트웨이 프리픽스가 틀렸을 때 어디를 고쳐야 하는지 알려준다."""
+    responses.add(responses.GET, CHAT_URL, json={}, status=404)
+
+    with pytest.raises(ExternalAPIError, match="EXTERNAL_API_CHAT_PATH"):
+        ChatAPIClient(settings, token="tok").fetch_chat("student-1")
+
+
+@responses.activate
+def test_401_오류에_토큰_힌트가_붙는다(settings):
+    responses.add(responses.GET, CHAT_URL, json={}, status=401)
+
+    with pytest.raises(ExternalAPIError, match="토큰이 만료"):
+        ChatAPIClient(settings, token="tok").fetch_chat("student-1")
+
+
+@responses.activate
+def test_경로와_loginType_을_설정에서_읽는다(chat_payload):
+    """게이트웨이 프리픽스가 다른 환경에서도 환경변수만으로 대응할 수 있어야 한다."""
+    custom = Settings(
+        database_url="postgresql://unused",
+        api_base_url=BASE_URL,
+        api_token=None,
+        api_login_id=None,
+        api_password=None,
+        api_timeout=1.0,
+        score_options=("1점",),
+        scale_stages=("1단계",),
+        api_login_path="/custom/login",
+        api_chat_path="/custom/chat",
+        api_login_type="MEDICAL",
+    )
+    responses.add(responses.POST, f"{BASE_URL}/custom/login", json={"accessToken": "t"}, status=200)
+    responses.add(responses.GET, f"{BASE_URL}/custom/chat", json=chat_payload, status=200)
+
+    client = ChatAPIClient(custom)
+    client.login("id", "pw")
+    turns = client.fetch_turns("student-1")
+
+    assert json.loads(responses.calls[0].request.body)["loginType"] == "MEDICAL"
+    assert "/custom/chat" in responses.calls[1].request.url
+    assert len(turns) == 4
