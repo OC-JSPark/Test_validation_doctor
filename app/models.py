@@ -52,6 +52,43 @@ class User:
 
 
 @dataclass(frozen=True)
+class Student:
+    """학생 명부 한 명 (외부 학생 DB 에서 읽기 전용으로 가져온 값)."""
+
+    student_id: str  # 외부 API 의 studentId (t_user.user_uuid)
+    nickname: str | None = None
+    school_name: str | None = None
+    grade: int | None = None
+    class_name: str | None = None
+
+    @property
+    def label(self) -> str:
+        """체크박스에 표시할 이름. 닉네임이 없으면 ID 앞부분으로 대체한다."""
+        name = (self.nickname or "").strip() or f"(이름없음) {self.student_id[:8]}…"
+        parts = [name]
+        if self.school_name:
+            school = self.school_name
+            if self.grade:
+                school += f" {self.grade}학년"
+                if self.class_name:
+                    school += f" {self.class_name}반"
+            parts.append(school)
+        return " · ".join(parts)
+
+    def matches(self, query: str) -> bool:
+        """검색어가 이름/학교/ID 중 하나에 포함되면 True (대소문자 무시)."""
+        needle = query.strip().lower()
+        if not needle:
+            return True
+        haystack = " ".join(
+            str(v).lower()
+            for v in (self.student_id, self.nickname, self.school_name, self.class_name)
+            if v
+        )
+        return needle in haystack
+
+
+@dataclass(frozen=True)
 class QATurn:
     """외부 API 대화에서 파싱한 Q&A 한 쌍 (SPEC.md §3)."""
 
