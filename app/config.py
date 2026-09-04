@@ -20,6 +20,9 @@ DEFAULT_DATABASE_URL = "postgresql://aimieapi:aimieapi@localhost:15432/validatio
 # 학생 명부 조회용 DB (읽기 전용). 지금은 로컬에 복원된 aimie_kids_app 을 보고,
 # 추후 인스턴스 DB 로 옮길 때는 이 접속 문자열만 바꾸면 된다.
 DEFAULT_STUDENT_DB_URL = "postgresql://aimieapi:aimieapi@localhost:15432/aimie_kids_app"
+
+# 척도검사(세션) 목록 조회용 DB (읽기 전용). 학생 명부와 다른 DB 에 있다.
+DEFAULT_SESSION_DB_URL = "postgresql://aimieapi:aimieapi@localhost:15432/aimie_kids_ai"
 DEFAULT_API_BASE_URL = "https://admin-dev.aimie-m.com"
 
 # 외부 API 경로. 게이트웨이 프리픽스가 환경마다 달라질 수 있어 환경변수로 덮어쓸 수 있게 둔다.
@@ -38,8 +41,8 @@ DEFAULT_SCORE_OPTIONS = (
 # 진단 단계(척도) 선택지. 마찬가지로 SCALE_STAGE_OPTIONS 로 덮어쓸 수 있다.
 DEFAULT_SCALE_STAGES = (
     "1단계 KIDSCREEN-10",
-    "2단계 PHQ-9",
-    "3단계 GAD-7",
+    "2단계 PHQ-2",
+    "3단계 PHQ-9",
 )
 
 
@@ -62,6 +65,7 @@ class Settings:
     score_options: tuple[str, ...]
     scale_stages: tuple[str, ...]
     student_db_url: str = DEFAULT_STUDENT_DB_URL
+    session_db_url: str = DEFAULT_SESSION_DB_URL
     api_login_path: str = DEFAULT_LOGIN_PATH
     api_chat_path: str = DEFAULT_CHAT_PATH
     api_login_type: str = "TEACHER"
@@ -73,6 +77,7 @@ class Settings:
             # 이 프로젝트는 VALIDATION_DATABASE_URL 만 본다.
             database_url=os.getenv("VALIDATION_DATABASE_URL", DEFAULT_DATABASE_URL),
             student_db_url=os.getenv("STUDENT_SOURCE_DATABASE_URL", DEFAULT_STUDENT_DB_URL),
+            session_db_url=os.getenv("SESSION_SOURCE_DATABASE_URL", DEFAULT_SESSION_DB_URL),
             api_base_url=os.getenv("EXTERNAL_API_BASE_URL", DEFAULT_API_BASE_URL).rstrip("/"),
             api_token=os.getenv("EXTERNAL_API_TOKEN") or None,
             api_login_id=os.getenv("EXTERNAL_API_LOGIN_ID") or None,

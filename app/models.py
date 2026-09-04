@@ -6,7 +6,7 @@ DB 행과 외부 API 응답을 그대로 dict 로 들고 다니지 않기 위한
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 
 ROLE_ADMIN = "ADMIN"
 ROLE_DOCTOR = "DOCTOR"
@@ -86,6 +86,27 @@ class Student:
             if v
         )
         return needle in haystack
+
+
+@dataclass(frozen=True)
+class ScaleSession:
+    """학생이 실시한 척도검사 1건 (= 하루톡 대화 1세션).
+
+    외부 대화 API 는 날짜를 `YY.MM.DD` 문자열로 받으므로 변환을 여기서 책임진다.
+    """
+
+    student_id: str
+    session_id: str
+    session_date: date
+
+    @property
+    def chat_date(self) -> str:
+        """외부 API 가 받는 날짜 형식 (YY.MM.DD)."""
+        return self.session_date.strftime("%y.%m.%d")
+
+    @property
+    def label(self) -> str:
+        return f"{self.session_date:%Y-%m-%d} · {self.session_id[:12]}…"
 
 
 @dataclass(frozen=True)
