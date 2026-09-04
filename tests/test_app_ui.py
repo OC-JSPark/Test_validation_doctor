@@ -221,6 +221,54 @@ def test_검색으로_걸러져도_선택이_유지된다(ui_admin):
     assert at.session_state["admin_selected_students"]  # 선택은 그대로
 
 
+def test_할당을_고르기_전에는_삭제버튼이_없다(committed_conn, ui_admin, ui_doctor):
+    """실수 클릭을 막기 위해 대상을 고른 뒤에만 삭제 버튼이 나타난다."""
+    conn, _ = committed_conn
+    assignment = assignments_repo.create_assignment(
+        conn, ui_doctor, "stu-del-ui", "sess", "26.08.31"
+    )
+
+    at = _login(ui_admin, "pw1234")
+    assert not at.exception
+    assert any("삭제할 할당 선택" in m.label for m in at.multiselect)
+    assert not any("선택한 할당 삭제" in b.label for b in at.button)
+
+    target = next(m for m in at.multiselect if "삭제할 할당 선택" in m.label)
+    target.set_value([assignment.id]).run()
+
+    assert any("선택한 할당 삭제" in b.label for b in at.button)
+
+
+def test_평가가_없는_할당은_삭제된다(committed_conn, ui_admin, ui_doctor):
+    conn, _ = committed_conn
+    assignment = assignments_repo.create_assignment(conn, ui_doctor, "stu-del-2", "sess", "26.08.31")
+
+    at = _login(ui_admin, "pw1234")
+    target = next(m for m in at.multiselect if "삭제할 할당 선택" in m.label)
+    target.set_value([assignment.id]).run()
+    next(b for b in at.button if "선택한 할당 삭제" in b.label).click().run()
+
+    assert not at.exception
+    assert assignments_repo.get_assignment(conn, assignment.id) is None
+
+
+def test_평가가_있는_할당은_확인없이_삭제되지_않는다(committed_conn, ui_admin, ui_doctor):
+    conn, _ = committed_conn
+    assignment = assignments_repo.create_assignment(conn, ui_doctor, "stu-del-3", "sess", "26.08.31")
+    evaluations_repo.sync_turns(conn, assignment.id, [QATurn(0, "질문", "답변")])
+    evaluations_repo.save_evaluation(
+        conn, assignment.id, 0, doctor_score="Very (4점)", doctor_opinion="사유"
+    )
+
+    at = _login(ui_admin, "pw1234")
+    target = next(m for m in at.multiselect if "삭제할 할당 선택" in m.label)
+    target.set_value([assignment.id]).run()
+    next(b for b in at.button if "선택한 할당 삭제" in b.label).click().run()
+
+    assert not at.exception
+    assert assignments_repo.get_assignment(conn, assignment.id) is not None
+
+
 def test_관리자_화면에_CSV_다운로드_버튼이_있다(ui_admin):
     at = _login(ui_admin, "pw1234")
 

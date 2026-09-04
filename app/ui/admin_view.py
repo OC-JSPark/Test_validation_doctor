@@ -68,6 +68,11 @@ def _render_dashboard() -> None:
     if not assignments:
         st.info("아직 할당된 작업이 없습니다.")
         return
+    _render_assignment_table(assignments)
+    _render_delete(assignments)
+
+
+def _render_assignment_table(assignments: list[Assignment]) -> None:
     st.dataframe(
         [
             {
@@ -86,6 +91,71 @@ def _render_dashboard() -> None:
         use_container_width=True,
         hide_index=True,
     )
+
+
+# --- 할당 삭제 -------------------------------------------------------------
+
+
+def _render_delete(assignments: list[Assignment]) -> None:
+    """할당 삭제. 평가 결과가 함께 지워지므로 확인 단계를 둔다."""
+    with st.expander("🗑 할당 삭제"):
+        labels = {
+            a.id: (
+                f"#{a.id} · {a.doctor_name} · {a.student_id[:12]}… · "
+                f"{a.chat_date or '(전체)'} · {a.status} ({a.completed_turns}/{a.total_turns})"
+            )
+            for a in assignments
+        }
+        # 삭제 후에는 위젯을 새 키로 다시 만들어 선택을 비운다.
+        # (이미 만들어진 위젯의 session_state 는 같은 실행 안에서 바꿀 수 없다.)
+        nonce = st.session_state.get("admin_delete_nonce", 0)
+        target_ids = st.multiselect(
+            "삭제할 할당 선택",
+            [a.id for a in assignments],
+            format_func=lambda aid: labels[aid],
+            key=f"admin_delete_targets_{nonce}",
+        )
+        if not target_ids:
+            st.caption("삭제할 할당을 고르면 영향도가 표시됩니다.")
+            return
+
+        with connection() as conn:
+            previews = admin_service.preview_deletion(conn, list(target_ids))
+
+        at_risk = [p for p in previews if p.has_work]
+        if at_risk:
+            st.warning(
+                f"선택한 {len(previews)}건 중 **{len(at_risk)}건**에 전문의가 입력한 평가가 "
+                "있습니다. 삭제하면 해당 평가 결과도 함께 사라지며 되돌릴 수 없습니다."
+            )
+            for preview in at_risk:
+                st.markdown(
+                    f"- `#{preview.assignment.id}` {preview.assignment.doctor_name} — "
+                    f"입력된 턴 **{preview.filled_turns}개**, 상태 `{preview.assignment.status}`"
+                )
+        else:
+            st.info(f"선택한 {len(previews)}건 모두 입력된 평가가 없습니다.")
+
+        force = st.checkbox(
+            "평가 결과가 있는 할당도 함께 삭제합니다 (되돌릴 수 없음)",
+            key="admin_delete_force",
+            disabled=not at_risk,
+        )
+
+        if st.button("선택한 할당 삭제", type="primary", key="admin_delete_btn"):
+            with connection() as conn:
+                deleted, protected = admin_service.delete_assignments(
+                    conn, list(target_ids), force=force
+                )
+            if deleted:
+                st.success(f"{len(deleted)}건을 삭제했습니다. (ID: {', '.join(map(str, deleted))})")
+            if protected:
+                st.info(
+                    f"{len(protected)}건은 평가 결과가 있어 건너뛰었습니다. "
+                    "지우려면 위 체크박스를 켜세요."
+                )
+            st.session_state["admin_delete_nonce"] = nonce + 1
+            st.rerun()
 
 
 # --- 작업 할당 -------------------------------------------------------------
