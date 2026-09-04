@@ -10,7 +10,6 @@ import streamlit as st
 from psycopg_pool import ConnectionPool
 
 from app import db
-from app.config import get_settings
 from app.external_api import ChatAPIClient
 from app.models import User
 
@@ -48,11 +47,6 @@ def require_login() -> User:
 def logout() -> None:
     for key in list(st.session_state.keys()):
         del st.session_state[key]
-
-
-def api_status_caption() -> None:
-    settings = get_settings()
-    st.caption(f"외부 API: {settings.api_base_url} (읽기 전용)")
 
 
 def progress_bar(pct: float) -> None:

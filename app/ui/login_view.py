@@ -6,7 +6,7 @@ import psycopg
 import streamlit as st
 
 from app.services import auth as auth_service
-from app.ui.common import api_status_caption, connection
+from app.ui.common import connection
 
 
 def render() -> None:
@@ -19,7 +19,6 @@ def render() -> None:
         submitted = st.form_submit_button("로그인", use_container_width=True)
 
     if not submitted:
-        api_status_caption()
         return
 
     try:

@@ -12,7 +12,7 @@ from __future__ import annotations
 import streamlit as st
 
 from app.ui import admin_view, doctor_view, login_view
-from app.ui.common import api_status_caption, current_user, logout
+from app.ui.common import current_user, logout
 
 st.set_page_config(page_title="AIMIE Kids 전문의 평가 시스템", layout="wide")
 
@@ -29,8 +29,6 @@ def main() -> None:
         if st.button("로그아웃", use_container_width=True):
             logout()
             st.rerun()
-        st.divider()
-        api_status_caption()
 
     if user.is_admin:
         admin_view.render(user)
