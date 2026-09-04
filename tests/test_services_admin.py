@@ -97,6 +97,111 @@ def test_할당이_없는_전문의도_대시보드에_0으로_나온다(conn, d
 # --- CSV 추출 --------------------------------------------------------------
 
 
+# --- 할당 삭제 -------------------------------------------------------------
+
+
+def test_입력이_없는_할당은_바로_삭제된다(conn, doctor):
+    assignment = assignments_repo.create_assignment(conn, doctor.user_id, "s1", "x", "d")
+    evaluations_repo.sync_turns(conn, assignment.id, [QATurn(0, "q", "a")])
+
+    deleted, protected = admin_service.delete_assignments(conn, [assignment.id])
+
+    assert deleted == [assignment.id]
+    assert protected == []
+    assert assignments_repo.get_assignment(conn, assignment.id) is None
+    # 원본 Q&A 행도 함께 지워진다
+    assert evaluations_repo.list_evaluations(conn, assignment.id) == []
+
+
+def test_전문의_입력이_있으면_기본적으로_보호된다(conn, doctor):
+    """실수로 평가 결과를 날리지 않도록 force 없이는 건너뛴다."""
+    assignment = assignments_repo.create_assignment(conn, doctor.user_id, "s1", "x", "d")
+    evaluations_repo.sync_turns(conn, assignment.id, [QATurn(0, "q", "a")])
+    evaluations_repo.save_evaluation(
+        conn, assignment.id, 0, doctor_score="4점", doctor_opinion="사유"
+    )
+
+    deleted, protected = admin_service.delete_assignments(conn, [assignment.id])
+
+    assert deleted == []
+    assert [p.assignment.id for p in protected] == [assignment.id]
+    assert protected[0].filled_turns == 1
+    assert assignments_repo.get_assignment(conn, assignment.id) is not None
+
+
+def test_force_를_주면_평가가_있어도_삭제된다(conn, doctor):
+    assignment = assignments_repo.create_assignment(conn, doctor.user_id, "s1", "x", "d")
+    evaluations_repo.sync_turns(conn, assignment.id, [QATurn(0, "q", "a")])
+    evaluations_repo.save_evaluation(
+        conn, assignment.id, 0, doctor_score="4점", doctor_opinion="사유"
+    )
+
+    deleted, protected = admin_service.delete_assignments(conn, [assignment.id], force=True)
+
+    assert deleted == [assignment.id]
+    assert protected == []
+    assert assignments_repo.get_assignment(conn, assignment.id) is None
+
+
+def test_완료된_할당도_보호_대상이다(conn, doctor):
+    assignment = assignments_repo.create_assignment(conn, doctor.user_id, "s1", "x", "d")
+    assignments_repo.mark_completed(conn, assignment.id)
+
+    _, protected = admin_service.delete_assignments(conn, [assignment.id])
+
+    assert [p.assignment.id for p in protected] == [assignment.id]
+
+
+def test_보호된_건과_삭제된_건이_함께_처리된다(conn, doctor):
+    clean = assignments_repo.create_assignment(conn, doctor.user_id, "s1", "x", "d")
+    dirty = assignments_repo.create_assignment(conn, doctor.user_id, "s2", "x", "d")
+    evaluations_repo.save_evaluation(
+        conn, dirty.id, 0, doctor_score="4점", doctor_opinion="사유"
+    )
+
+    deleted, protected = admin_service.delete_assignments(conn, [clean.id, dirty.id])
+
+    assert deleted == [clean.id]
+    assert [p.assignment.id for p in protected] == [dirty.id]
+
+
+def test_없는_ID_는_조용히_무시된다(conn, doctor):
+    assignment = assignments_repo.create_assignment(conn, doctor.user_id, "s1", "x", "d")
+
+    deleted, protected = admin_service.delete_assignments(conn, [assignment.id, 999_999])
+
+    assert deleted == [assignment.id]
+    assert protected == []
+
+
+def test_삭제_미리보기가_입력된_턴_수를_알려준다(conn, doctor):
+    assignment = assignments_repo.create_assignment(conn, doctor.user_id, "s1", "x", "d")
+    evaluations_repo.sync_turns(conn, assignment.id, [QATurn(i, "q", "a") for i in range(3)])
+    for i in range(2):
+        evaluations_repo.save_evaluation(
+            conn, assignment.id, i, doctor_score="4점", doctor_opinion="사유"
+        )
+
+    preview = admin_service.preview_deletion(conn, [assignment.id])[0]
+
+    assert preview.filled_turns == 2
+    assert preview.has_work is True
+
+
+def test_삭제된_할당은_CSV_에서도_사라진다(conn, doctor):
+    assignment = assignments_repo.create_assignment(conn, doctor.user_id, "stu-del", "x", "d")
+    evaluations_repo.sync_turns(conn, assignment.id, [QATurn(0, "삭제될 질문", "답변")])
+    evaluations_repo.save_evaluation(
+        conn, assignment.id, 0, doctor_score="4점", doctor_opinion="사유"
+    )
+    assignments_repo.mark_completed(conn, assignment.id)
+    assert "삭제될 질문" in admin_service.export_csv(conn).decode("utf-8-sig")
+
+    admin_service.delete_assignments(conn, [assignment.id], force=True)
+
+    assert "삭제될 질문" not in admin_service.export_csv(conn).decode("utf-8-sig")
+
+
 def _read_csv(payload: bytes) -> list[list[str]]:
     return list(csv.reader(io.StringIO(payload.decode("utf-8-sig"))))
 

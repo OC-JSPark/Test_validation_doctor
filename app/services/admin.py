@@ -121,6 +121,58 @@ def doctor_progress(conn: psycopg.Connection) -> list[DoctorProgress]:
     return rows
 
 
+@dataclass(frozen=True)
+class DeletionPreview:
+    """삭제 전 영향도. 전문의가 이미 입력한 평가가 함께 지워지는지 알려준다."""
+
+    assignment: Assignment
+    filled_turns: int
+
+    @property
+    def has_work(self) -> bool:
+        """지우면 전문의 입력이 사라지는 건인지."""
+        return self.filled_turns > 0 or self.assignment.status == STATUS_COMPLETED
+
+
+def preview_deletion(
+    conn: psycopg.Connection, assignment_ids: list[int]
+) -> list[DeletionPreview]:
+    """삭제 대상들의 영향도를 미리 계산한다 (UI 확인 문구용)."""
+    previews: list[DeletionPreview] = []
+    for assignment_id in assignment_ids:
+        assignment = assignments_repo.get_assignment(conn, assignment_id)
+        if assignment is None:
+            continue
+        filled = sum(
+            1 for e in evaluations_repo.list_evaluations(conn, assignment_id) if e.is_filled
+        )
+        previews.append(DeletionPreview(assignment=assignment, filled_turns=filled))
+    return previews
+
+
+def delete_assignments(
+    conn: psycopg.Connection, assignment_ids: list[int], *, force: bool = False
+) -> tuple[list[int], list[DeletionPreview]]:
+    """할당 삭제. 평가 결과(doctor_evaluations)도 함께 지워진다.
+
+    전문의가 이미 입력한 건은 기본적으로 건너뛴다. 실수로 평가 결과를
+    날리지 않도록, 지우려면 `force=True` 를 명시해야 한다.
+
+    (삭제한 ID 목록, 보호되어 건너뛴 항목) 을 돌려준다.
+    """
+    deleted: list[int] = []
+    protected: list[DeletionPreview] = []
+
+    for preview in preview_deletion(conn, assignment_ids):
+        if preview.has_work and not force:
+            protected.append(preview)
+            continue
+        assignments_repo.delete_assignment(conn, preview.assignment.id)
+        deleted.append(preview.assignment.id)
+
+    return deleted, protected
+
+
 def _format_datetime(value: datetime | None) -> str:
     return value.strftime("%Y-%m-%d %H:%M:%S") if value else ""
 
