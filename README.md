@@ -19,9 +19,13 @@ AIMIE Kids 하루톡 대화에 대한 **전문의 평가 시스템** (Streamlit 
 
 - **대화 내역**은 외부 API 호출로만 읽는다 (`aimie_kids_ai` 에 직접 붙지 않는다).
 - **학생 명부**는 학생 DB(`aimie_kids_app`)를 **읽기 전용**으로 조회한다.
-  관리자 화면의 학생 선택 목록이 여기서 나온다 — `app/student_directory.py` 한 곳으로만 접근하며,
-  커넥션은 `read_only` 로 열려 쓰기 쿼리가 DB 단계에서 거부된다.
-  추후 인스턴스 DB 로 옮길 때는 `STUDENT_SOURCE_DATABASE_URL` 만 바꾸면 된다.
+  관리자 화면의 학생 선택 목록이 여기서 나온다 — `app/student_directory.py` 한 곳으로만 접근한다.
+- **척도검사 목록**은 세션 DB(`aimie_kids_ai.sessions`)를 **읽기 전용**으로 조회한다.
+  관리자가 학생을 고르면 그 학생이 실시한 검사 전체가 할당 대상이 되므로 날짜를 입력하지 않는다.
+  외부 API 에는 세션 목록 엔드포인트가 없어 DB 에서 읽는다 — `app/session_directory.py`.
+- 두 조회 모두 커넥션이 `read_only` 로 열려 쓰기 쿼리가 DB 단계에서 거부된다.
+  추후 인스턴스 DB 로 옮길 때는 `STUDENT_SOURCE_DATABASE_URL` /
+  `SESSION_SOURCE_DATABASE_URL` 만 바꾸면 된다.
 - 이 시스템이 **만들어내는** 데이터는 전부 신규 DB `validation_db` 에만 저장한다.
 
 ## 빠른 시작
@@ -82,6 +86,7 @@ DB 테스트는 실제 `validation_db` 에 붙어 트랜잭션 롤백으로 격�
 | `app/parsing.py` | 외부 API 메시지 → Q&A 턴 파싱 (순수 함수) |
 | `app/external_api.py` | 외부 대화 API 클라이언트 (Read-only) |
 | `app/student_directory.py` | 학생 명부 조회 (학생 DB, Read-only) |
+| `app/session_directory.py` | 척도검사 목록 조회 (세션 DB, Read-only) |
 | `app/repositories/` | SQL 접근 계층 (커밋하지 않음) |
 | `app/services/` | SPEC §6 API 컨트롤러에 대응하는 서비스 함수 |
 | `app/ui/` | 로그인 / 관리자 / 전문의 화면 |
