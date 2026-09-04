@@ -69,6 +69,10 @@ class ChatAPIClient:
         """토큰이 없고 로그인 정보가 설정돼 있으면 자동으로 로그인한다."""
         if self.token:
             return self.token
+        return self._relogin()
+
+    def _relogin(self) -> str | None:
+        """설정된 계정으로 로그인해 토큰을 새로 받는다. 계정이 없으면 None."""
         if self.settings.api_login_id and self.settings.api_password:
             return self.login(self.settings.api_login_id, self.settings.api_password)
         return None
@@ -84,7 +88,16 @@ class ChatAPIClient:
         if session_id:
             params["sessionId"] = session_id
         self.ensure_token()
-        return self._request("GET", self.settings.api_chat_path, params=params)
+        try:
+            return self._request("GET", self.settings.api_chat_path, params=params)
+        except ExternalAPIError as exc:
+            # 토큰은 만료된다. 401 이면 한 번만 재로그인 후 재시도한다.
+            if exc.status_code != 401:
+                raise
+            self.token = None
+            if self._relogin() is None:
+                raise
+            return self._request("GET", self.settings.api_chat_path, params=params)
 
     def fetch_turns(
         self, student_id: str, *, date: str | None = None, session_id: str | None = None

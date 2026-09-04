@@ -138,6 +138,65 @@ def test_연결_실패는_ExternalAPIError_로_감싼다(settings):
 
 
 @responses.activate
+def test_토큰_만료시_재로그인_후_재시도한다(chat_payload):
+    """실제 화면에서 발견된 회귀: 캐시된 토큰이 만료되면 계속 401 만 났다."""
+    creds = Settings(
+        database_url="postgresql://unused",
+        api_base_url=BASE_URL,
+        api_token=None,
+        api_login_id="admin-id",
+        api_password="admin-pw",
+        api_timeout=1.0,
+        score_options=("1점",),
+        scale_stages=("1단계",),
+    )
+    responses.add(responses.GET, CHAT_URL, json={"message": "Token expired"}, status=401)
+    responses.add(responses.POST, LOGIN_URL, json={"accessToken": "fresh"}, status=200)
+    responses.add(responses.GET, CHAT_URL, json=chat_payload, status=200)
+
+    client = ChatAPIClient(creds, token="expired-token")
+    turns = client.fetch_turns("student-1")
+
+    assert len(turns) == 4
+    assert client.token == "fresh"
+    assert responses.calls[2].request.headers["Authorization"] == "Bearer fresh"
+
+
+@responses.activate
+def test_로그인_정보가_없으면_401_을_그대로_올린다(settings):
+    """재시도할 수단이 없으면 조용히 삼키지 말고 오류를 보여준다."""
+    responses.add(responses.GET, CHAT_URL, json={}, status=401)
+
+    with pytest.raises(ExternalAPIError) as excinfo:
+        ChatAPIClient(settings, token="expired").fetch_chat("student-1")
+
+    assert excinfo.value.status_code == 401
+
+
+@responses.activate
+def test_재로그인해도_401_이면_두번만_시도하고_포기한다(chat_payload):
+    creds = Settings(
+        database_url="postgresql://unused",
+        api_base_url=BASE_URL,
+        api_token=None,
+        api_login_id="admin-id",
+        api_password="admin-pw",
+        api_timeout=1.0,
+        score_options=("1점",),
+        scale_stages=("1단계",),
+    )
+    responses.add(responses.GET, CHAT_URL, json={}, status=401)
+    responses.add(responses.POST, LOGIN_URL, json={"accessToken": "fresh"}, status=200)
+    responses.add(responses.GET, CHAT_URL, json={}, status=401)
+
+    with pytest.raises(ExternalAPIError):
+        ChatAPIClient(creds, token="expired").fetch_chat("student-1")
+
+    # 조회 2회 + 로그인 1회 = 3회. 무한 재시도하지 않는다.
+    assert len(responses.calls) == 3
+
+
+@responses.activate
 def test_404_오류에_경로_확인_힌트가_붙는다(settings):
     """게이트웨이 프리픽스가 틀렸을 때 어디를 고쳐야 하는지 알려준다."""
     responses.add(responses.GET, CHAT_URL, json={}, status=404)
