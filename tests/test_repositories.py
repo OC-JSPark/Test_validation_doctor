@@ -179,6 +179,38 @@ def test_평가_저장은_upsert_라_중복행이_생기지_않는다(conn, doct
     assert rows[0].doctor_opinion == "수정본"
 
 
+def test_넘기지_않은_필드는_기존_값을_유지한다(conn, doctor):
+    """실제 화면에서 발견된 회귀: 소견만 저장했더니 점수가 NULL 로 지워졌다.
+
+    UI 위젯 상태가 유실돼 일부 필드만 들어와도 나머지가 날아가면 안 된다.
+    """
+    assignment = assignments_repo.create_assignment(conn, doctor.user_id, "s", "x", "d")
+    evaluations_repo.save_evaluation(
+        conn, assignment.id, 0, doctor_score="Very (4점)", doctor_opinion="원래 소견"
+    )
+
+    # 소견만 갱신 — 점수는 아예 넘기지 않는다
+    evaluations_repo.save_evaluation(conn, assignment.id, 0, doctor_opinion="수정된 소견")
+
+    row = evaluations_repo.get_evaluation(conn, assignment.id, 0)
+    assert row.doctor_score == "Very (4점)"  # 유지되어야 한다
+    assert row.doctor_opinion == "수정된 소견"
+
+
+def test_None_을_명시하면_값이_지워진다(conn, doctor):
+    """'미선택' 을 고른 경우는 실제로 비워야 한다 (UNSET 과 구분)."""
+    assignment = assignments_repo.create_assignment(conn, doctor.user_id, "s", "x", "d")
+    evaluations_repo.save_evaluation(
+        conn, assignment.id, 0, doctor_score="Very (4점)", doctor_opinion="소견"
+    )
+
+    evaluations_repo.save_evaluation(conn, assignment.id, 0, doctor_score=None)
+
+    row = evaluations_repo.get_evaluation(conn, assignment.id, 0)
+    assert row.doctor_score is None
+    assert row.doctor_opinion == "소견"  # 넘기지 않은 필드는 그대로
+
+
 def test_평가_저장은_원본_QA_를_덮어쓰지_않는다(conn, doctor):
     assignment = assignments_repo.create_assignment(conn, doctor.user_id, "s", "x", "d")
     evaluations_repo.sync_turns(conn, assignment.id, _turns(1))

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import psycopg
 
 from app.external_api import ChatAPIClient
-from app.models import Assignment, Evaluation
+from app.models import UNSET, Assignment, Evaluation, _Unset
 from app.repositories import assignments as assignments_repo
 from app.repositories import evaluations as evaluations_repo
 
@@ -80,13 +80,15 @@ def save_turn(
     assignment_id: int,
     turn_index: int,
     *,
-    doctor_score: str | None,
-    doctor_opinion: str | None,
-    scale_stage: str | None = None,
+    doctor_score: str | None | _Unset = UNSET,
+    doctor_opinion: str | None | _Unset = UNSET,
+    scale_stage: str | None | _Unset = UNSET,
 ) -> Assignment:
     """POST /api/doctor/evaluations/{assignmentId}/turn/{turnIndex}
 
     턴 이동 시 자동 저장(Upsert)에 쓰인다. 저장 후 진행률을 다시 계산한다.
+    넘기지 않은 필드(UNSET)는 기존 값을 유지한다 — 자세한 내용은
+    `evaluations_repo.save_evaluation` 참고.
     """
     assignment = assignments_repo.get_assignment(conn, assignment_id)
     if assignment is None:

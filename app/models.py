@@ -11,6 +11,30 @@ from datetime import datetime
 ROLE_ADMIN = "ADMIN"
 ROLE_DOCTOR = "DOCTOR"
 
+
+class _Unset:
+    """'이 필드는 건드리지 말라'는 뜻의 센티널.
+
+    저장 시 `None`(값을 비운다) 과 '전달되지 않음'(기존 값 유지) 을 구분하기 위해 쓴다.
+    Streamlit 위젯 상태가 유실됐을 때 멀쩡한 컬럼이 NULL 로 덮어써지는 것을 막는다.
+    """
+
+    _instance = None
+
+    def __new__(cls) -> "_Unset":
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __repr__(self) -> str:  # pragma: no cover - 디버깅 편의용
+        return "UNSET"
+
+    def __bool__(self) -> bool:
+        return False
+
+
+UNSET = _Unset()
+
 STATUS_PENDING = "PENDING"
 STATUS_IN_PROGRESS = "IN_PROGRESS"
 STATUS_COMPLETED = "COMPLETED"

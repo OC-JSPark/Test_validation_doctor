@@ -151,6 +151,26 @@ def test_모든_턴_입력후_최종완료_버튼_활성(committed_conn, ui_doct
     assert complete_button.disabled is False
 
 
+def test_소견을_나중에_입력해도_점수가_유지된다(committed_conn, ui_doctor):
+    """실제 브라우저에서 발견된 회귀 시나리오: 점수 먼저 → 소견 나중."""
+    conn, _ = committed_conn
+    assignment = assignments_repo.create_assignment(conn, ui_doctor, "stu-5", "sess-1", "26.08.31")
+    evaluations_repo.sync_turns(conn, assignment.id, [QATurn(0, "질문", "답변")])
+    assignments_repo.update_total_turns(conn, assignment.id, 1)
+
+    at = _login(ui_doctor, "pw1234")
+    score_box = next(s for s in at.selectbox if "점수" in s.label)
+    score_box.set_value("Very (4점)").run()
+    at.text_area[0].set_value("나중에 입력한 소견").run()
+
+    assert not at.exception
+    saved = evaluations_repo.get_evaluation(conn, assignment.id, 0)
+    assert saved.doctor_score == "Very (4점)"
+    assert saved.doctor_opinion == "나중에 입력한 소견"
+    # 두 항목이 다 채워졌으므로 [최종 완료] 가 활성화되어야 한다
+    assert next(b for b in at.button if "최종 완료" in b.label).disabled is False
+
+
 def test_판단이유_입력시_자동저장된다(committed_conn, ui_doctor):
     conn, _ = committed_conn
     assignment = assignments_repo.create_assignment(conn, ui_doctor, "stu-4", "sess-1", "26.08.31")

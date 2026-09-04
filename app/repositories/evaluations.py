@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import psycopg
 
-from app.models import Evaluation, QATurn, build_evaluation_code
+from app.models import UNSET, Evaluation, QATurn, _Unset, build_evaluation_code
 
 _COLUMNS = """
     id, assignment_id, evaluation_code, turn_index, scale_stage,
@@ -86,11 +86,20 @@ def save_evaluation(
     assignment_id: int,
     turn_index: int,
     *,
-    doctor_score: str | None,
-    doctor_opinion: str | None,
-    scale_stage: str | None = None,
+    doctor_score: str | None | _Unset = UNSET,
+    doctor_opinion: str | None | _Unset = UNSET,
+    scale_stage: str | None | _Unset = UNSET,
 ) -> Evaluation | None:
-    """전문의 입력 저장 (Upsert). 원본 Q&A 는 덮어쓰지 않는다."""
+    """전문의 입력 저장 (Upsert). 원본 Q&A 는 덮어쓰지 않는다.
+
+    각 필드는 세 가지 상태를 구분한다:
+    - 값을 넘기면      → 그 값으로 저장
+    - `None` 을 넘기면 → 값을 비운다 (전문의가 '미선택' 을 고른 경우)
+    - 안 넘기면(UNSET) → **기존 값을 그대로 둔다**
+
+    UI 위젯 상태가 유실돼 일부 필드가 비어 들어오더라도 이미 입력된 값이
+    NULL 로 덮어써지지 않도록 하기 위한 구분이다.
+    """
     row = conn.execute(
         f"""
         INSERT INTO doctor_evaluations
@@ -98,9 +107,12 @@ def save_evaluation(
              scale_stage, doctor_score, doctor_opinion)
         VALUES (%s, %s, %s, %s, %s, %s)
         ON CONFLICT (assignment_id, turn_index) DO UPDATE
-            SET scale_stage = EXCLUDED.scale_stage,
-                doctor_score = EXCLUDED.doctor_score,
-                doctor_opinion = EXCLUDED.doctor_opinion,
+            SET scale_stage = CASE WHEN %s
+                    THEN EXCLUDED.scale_stage ELSE doctor_evaluations.scale_stage END,
+                doctor_score = CASE WHEN %s
+                    THEN EXCLUDED.doctor_score ELSE doctor_evaluations.doctor_score END,
+                doctor_opinion = CASE WHEN %s
+                    THEN EXCLUDED.doctor_opinion ELSE doctor_evaluations.doctor_opinion END,
                 updated_at = NOW()
         RETURNING {_COLUMNS}
         """,  # noqa: S608
@@ -108,9 +120,12 @@ def save_evaluation(
             assignment_id,
             turn_index,
             build_evaluation_code(assignment_id, turn_index),
-            scale_stage,
-            doctor_score,
-            doctor_opinion,
+            None if isinstance(scale_stage, _Unset) else scale_stage,
+            None if isinstance(doctor_score, _Unset) else doctor_score,
+            None if isinstance(doctor_opinion, _Unset) else doctor_opinion,
+            not isinstance(scale_stage, _Unset),
+            not isinstance(doctor_score, _Unset),
+            not isinstance(doctor_opinion, _Unset),
         ),
     ).fetchone()
     return _to_evaluation(row)

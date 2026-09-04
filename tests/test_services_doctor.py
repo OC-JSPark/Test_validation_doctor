@@ -99,6 +99,22 @@ def test_턴_저장시_진행률이_갱신된다(conn, assignment, fake_client):
     assert updated.status == STATUS_IN_PROGRESS
 
 
+def test_일부_필드만_저장해도_나머지가_지워지지_않는다(conn, assignment, fake_client):
+    """UI 자동저장이 위젯 상태를 일부만 넘겨도 기존 입력이 살아 있어야 한다."""
+    doctor_service.load_evaluation_set(conn, assignment.id, fake_client)
+    doctor_service.save_turn(
+        conn, assignment.id, 0, doctor_score="Very (4점)", doctor_opinion="원래 소견"
+    )
+
+    # 소견만 넘긴다 (점수는 UNSET)
+    updated = doctor_service.save_turn(conn, assignment.id, 0, doctor_opinion="수정 소견")
+
+    row = evaluations_repo.get_evaluation(conn, assignment.id, 0)
+    assert row.doctor_score == "Very (4점)"
+    assert row.doctor_opinion == "수정 소견"
+    assert updated.completed_turns == 1  # 여전히 완료된 턴으로 집계된다
+
+
 def test_can_complete_는_모든_턴이_채워져야_True(conn, assignment, fake_client):
     doctor_service.load_evaluation_set(conn, assignment.id, fake_client)
     assert doctor_service.load_evaluation_set(

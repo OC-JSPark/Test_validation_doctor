@@ -6,7 +6,7 @@ import streamlit as st
 
 from app.config import get_settings
 from app.external_api import ExternalAPIError
-from app.models import STATUS_COMPLETED, Assignment, User
+from app.models import STATUS_COMPLETED, UNSET, Assignment, User
 from app.services import doctor as doctor_service
 from app.services.doctor import AssignmentLocked, EvaluationSet
 from app.ui.common import chat_client, connection, progress_bar
@@ -109,10 +109,15 @@ NO_SCORE = "(미선택)"
 
 
 def _autosave(assignment_id: int, turn_index: int) -> None:
-    """위젯 변경/턴 이동 시 자동 저장 (SPEC.md §2 상세 4)."""
-    score = st.session_state.get(f"score_{assignment_id}_{turn_index}")
-    opinion = st.session_state.get(f"opinion_{assignment_id}_{turn_index}")
-    stage = st.session_state.get(f"stage_{assignment_id}_{turn_index}")
+    """위젯 변경/턴 이동 시 자동 저장 (SPEC.md §2 상세 4).
+
+    세션 상태에 없는 위젯 값은 UNSET 으로 넘겨 **기존 DB 값을 건드리지 않는다.**
+    (모든 필드를 위젯에서 재구성해 저장하면, 위젯 상태가 하나라도 유실됐을 때
+    이미 입력된 값이 NULL 로 덮어써진다.)
+    """
+    score = st.session_state.get(f"score_{assignment_id}_{turn_index}", UNSET)
+    opinion = st.session_state.get(f"opinion_{assignment_id}_{turn_index}", UNSET)
+    stage = st.session_state.get(f"stage_{assignment_id}_{turn_index}", UNSET)
     if score == NO_SCORE:
         score = None  # 미선택은 '입력 없음' 으로 저장해 완료 턴에서 제외한다
     try:
