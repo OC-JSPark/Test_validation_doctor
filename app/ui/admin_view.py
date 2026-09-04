@@ -6,13 +6,14 @@ from datetime import datetime
 
 import streamlit as st
 
+from app import student_directory
 from app.models import User
 from app.repositories import users as users_repo
 from app.services import admin as admin_service
+from app.student_directory import StudentDirectoryError
 from app.ui.common import connection, progress_bar
 
-_STUDENT_POOL_KEY = "admin_student_pool"
-_SESSION_POOL_KEY = "admin_session_pool"
+_SELECTED_STUDENTS_KEY = "admin_selected_students"
 
 
 def render(user: User) -> None:
@@ -94,30 +95,86 @@ def _pool_from_state(key: str) -> list[str]:
     return st.session_state.get(key, [])
 
 
-def _render_id_picker(label: str, key: str, raw_key: str, placeholder: str) -> list[str]:
-    """ID 를 입력해 후보로 만들고, 칩을 눌러 on/off 로 고른다 (SPEC.md §2 상세 1)."""
-    raw = st.text_area(
-        f"{label} 후보 입력 (한 줄에 하나 또는 콤마 구분)",
-        key=raw_key,
-        placeholder=placeholder,
-        height=90,
-    )
-    candidates: list[str] = []
-    for line in raw.replace(",", "\n").splitlines():
-        value = line.strip()
-        if value and value not in candidates:
-            candidates.append(value)
-    st.session_state[key] = candidates
+def _selected_students() -> set[str]:
+    """선택 상태는 체크박스 위젯이 아니라 여기에 보관한다.
 
-    if not candidates:
-        st.caption(f"{label}를 입력하면 아래에 선택 칩이 나타납니다.")
+    검색으로 걸러진 학생의 체크박스는 렌더링되지 않는데, 그때 위젯 상태가
+    사라져도 선택이 풀리지 않도록 별도 집합으로 관리한다.
+    """
+    return st.session_state.setdefault(_SELECTED_STUDENTS_KEY, set())
+
+
+def _toggle_student(student_id: str) -> None:
+    selected = _selected_students()
+    if st.session_state.get(f"stu_chk_{student_id}"):
+        selected.add(student_id)
+    else:
+        selected.discard(student_id)
+
+
+def _set_all(student_ids: list[str], checked: bool) -> None:
+    selected = _selected_students()
+    for student_id in student_ids:
+        st.session_state[f"stu_chk_{student_id}"] = checked
+        selected.add(student_id) if checked else selected.discard(student_id)
+
+
+def _render_student_picker() -> list[str]:
+    """학생 DB 에서 전체 명부를 읽어 스크롤 가능한 체크박스 목록으로 보여준다."""
+    try:
+        students = student_directory.list_students()
+    except StudentDirectoryError as exc:
+        st.error(str(exc))
         return []
-    return st.pills(
-        f"{label} 선택 (클릭해서 on/off)",
-        candidates,
-        selection_mode="multi",
-        key=f"{key}_selected",
+
+    if not students:
+        st.warning("학생 명부가 비어 있습니다.")
+        return []
+
+    query = st.text_input(
+        "학생 검색", key="admin_student_query", placeholder="이름 · 학교 · 학생 ID"
     )
+    visible = student_directory.filter_students(students, query)
+    selected = _selected_students()
+
+    col_all, col_none, col_count = st.columns([1, 1, 2])
+    col_all.button(
+        "전체 선택",
+        use_container_width=True,
+        on_click=_set_all,
+        args=([s.student_id for s in visible], True),
+        disabled=not visible,
+    )
+    col_none.button(
+        "전체 해제",
+        use_container_width=True,
+        on_click=_set_all,
+        args=([s.student_id for s in students], False),
+        disabled=not selected,
+    )
+    col_count.markdown(
+        f"전체 **{len(students)}명** · 검색결과 **{len(visible)}명** · 선택 **{len(selected)}명**"
+    )
+
+    if not visible:
+        st.caption("검색 조건에 맞는 학생이 없습니다.")
+
+    # 명부가 길어져도 화면이 밀리지 않도록 고정 높이 스크롤 영역에 담는다.
+    with st.container(height=320, border=True):
+        for student in visible:
+            key = f"stu_chk_{student.student_id}"
+            if key not in st.session_state:
+                st.session_state[key] = student.student_id in selected
+            st.checkbox(
+                student.label,
+                key=key,
+                help=f"studentId: {student.student_id}",
+                on_change=_toggle_student,
+                args=(student.student_id,),
+            )
+
+    # 명부에 있는 학생만, 화면 순서대로 돌려준다.
+    return [s.student_id for s in students if s.student_id in selected]
 
 
 def _render_assign() -> None:
@@ -138,20 +195,23 @@ def _render_assign() -> None:
         ),
     )
 
-    col_student, col_session = st.columns(2)
-    with col_student:
-        selected_students = _render_id_picker(
-            "학생 ID", _STUDENT_POOL_KEY, "admin_student_raw", "9612f93d33d0dfbe0df89ce3bea7a98b"
-        )
-    with col_session:
-        selected_sessions = _render_id_picker(
-            "세션 ID", _SESSION_POOL_KEY, "admin_session_raw", "sess-0001 (비우면 전체 세션)"
-        )
+    st.markdown("#### 학생 선택")
+    selected_students = _render_student_picker()
 
-    chat_date = st.text_input("조회 날짜 (YY.MM.DD)", value=datetime.now().strftime("%y.%m.%d"))
+    col_session, col_date = st.columns(2)
+    with col_session:
+        session_id = st.text_input(
+            "세션 ID (선택)",
+            key="admin_session_id",
+            placeholder="비우면 해당 날짜의 전체 세션",
+        )
+    with col_date:
+        chat_date = st.text_input(
+            "조회 날짜 (YY.MM.DD)", value=datetime.now().strftime("%y.%m.%d")
+        )
 
     targets = admin_service.build_targets(
-        list(selected_students), list(selected_sessions), chat_date
+        list(selected_students), [session_id] if session_id else [], chat_date
     )
     st.caption(f"생성될 작업: **{len(targets)}건**")
 

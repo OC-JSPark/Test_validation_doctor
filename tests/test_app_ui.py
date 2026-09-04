@@ -188,6 +188,39 @@ def test_판단이유_입력시_자동저장된다(committed_conn, ui_doctor):
 # --- 관리자 화면 -----------------------------------------------------------
 
 
+def test_관리자_화면에_학생_체크박스_목록이_뜬다(ui_admin):
+    """학생 명부를 DB 에서 읽어 체크박스로 보여준다."""
+    at = _login(ui_admin, "pw1234")
+
+    assert not at.exception
+    assert at.checkbox, "학생 체크박스가 하나도 렌더링되지 않았습니다."
+    assert any("전체 선택" in b.label for b in at.button)
+    assert any("학생 검색" in t.label for t in at.text_input)
+
+
+def test_학생을_체크하면_생성될_작업_건수가_늘어난다(ui_admin):
+    at = _login(ui_admin, "pw1234")
+
+    at.checkbox[0].check().run()
+
+    assert not at.exception
+    texts = [c.value for c in at.markdown] + [c.value for c in at.caption]
+    assert any("생성될 작업: **1건**" in t for t in texts)
+    assert next(b for b in at.button if b.label == "작업 생성").disabled is False
+
+
+def test_검색으로_걸러져도_선택이_유지된다(ui_admin):
+    """체크된 학생이 검색 결과에서 빠져도 선택이 풀리면 안 된다."""
+    at = _login(ui_admin, "pw1234")
+    at.checkbox[0].check().run()
+
+    search = next(t for t in at.text_input if "학생 검색" in t.label)
+    search.set_value("검색결과가없는문자열zzz").run()
+
+    assert not at.exception
+    assert at.session_state["admin_selected_students"]  # 선택은 그대로
+
+
 def test_관리자_화면에_CSV_다운로드_버튼이_있다(ui_admin):
     at = _login(ui_admin, "pw1234")
 
