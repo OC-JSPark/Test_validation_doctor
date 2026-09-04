@@ -14,6 +14,7 @@ import pytest
 from psycopg.rows import dict_row
 from streamlit.testing.v1 import AppTest
 
+from app import session_directory, student_directory
 from app.config import get_settings
 from app.models import ROLE_ADMIN, ROLE_DOCTOR, QATurn
 from app.repositories import assignments as assignments_repo
@@ -198,15 +199,42 @@ def test_관리자_화면에_학생_체크박스_목록이_뜬다(ui_admin):
     assert any("학생 검색" in t.label for t in at.text_input)
 
 
-def test_학생을_체크하면_생성될_작업_건수가_늘어난다(ui_admin):
+def test_학생을_체크하면_그_학생의_척도검사_수만큼_대상이_잡힌다(ui_admin):
+    """학생 1명 선택 → 그 학생이 실시한 검사 전부가 할당 대상이 된다."""
     at = _login(ui_admin, "pw1234")
 
-    at.checkbox[0].check().run()
+    # 검사 이력이 있는 학생을 골라 체크한다.
+    students = student_directory.list_students()
+    sessions = session_directory.list_sessions([s.student_id for s in students])
+    grouped = session_directory.group_by_student(sessions)
+    if not grouped:
+        pytest.fail("명부 학생 중 척도검사 이력이 있는 학생이 없습니다.", pytrace=False)
+    target_id, target_sessions = next(iter(grouped.items()))
+
+    next(c for c in at.checkbox if target_id in (c.help or "")).check().run()
 
     assert not at.exception
     texts = [c.value for c in at.markdown] + [c.value for c in at.caption]
-    assert any("생성될 작업: **1건**" in t for t in texts)
+    assert any(f"생성될 작업: **{len(target_sessions)}건**" in t for t in texts)
     assert next(b for b in at.button if b.label == "작업 생성").disabled is False
+
+
+def test_검사이력이_없는_학생은_경고하고_할당하지_않는다(ui_admin):
+    at = _login(ui_admin, "pw1234")
+
+    students = student_directory.list_students()
+    sessions = session_directory.list_sessions([s.student_id for s in students])
+    with_sessions = set(session_directory.group_by_student(sessions))
+    empty = [s for s in students if s.student_id not in with_sessions]
+    if not empty:
+        pytest.skip("명부 학생 전원이 검사 이력을 가지고 있어 이 경우를 만들 수 없습니다.")
+
+    next(c for c in at.checkbox if empty[0].student_id in (c.help or "")).check().run()
+
+    assert not at.exception
+    assert any("척도검사 이력이 없어" in w.value for w in at.warning)
+    texts = [c.value for c in at.markdown] + [c.value for c in at.caption]
+    assert any("생성될 작업: **0건**" in t for t in texts)
 
 
 def test_검색으로_걸러져도_선택이_유지된다(ui_admin):

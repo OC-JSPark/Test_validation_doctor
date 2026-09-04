@@ -6,18 +6,44 @@ from datetime import datetime
 
 import streamlit as st
 
-from app import student_directory
-from app.models import User
+from app import session_directory, student_directory
+from app.models import Assignment, ScaleSession, User
 from app.repositories import users as users_repo
 from app.services import admin as admin_service
+from app.session_directory import SessionDirectoryError
 from app.student_directory import StudentDirectoryError
 from app.ui.common import connection, progress_bar
 
 _SELECTED_STUDENTS_KEY = "admin_selected_students"
+_FLASH_KEY = "admin_flash"
+
+
+def _render_flash() -> None:
+    """직전 실행에서 남긴 결과 메시지를 보여준다.
+
+    `st.rerun()` 은 스크립트를 처음부터 다시 실행하므로, rerun 직전에 그린
+    메시지는 화면에 남지 않는다. 그래서 결과를 세션에 담아 다음 실행에서 그린다.
+    """
+    flash = st.session_state.pop(_FLASH_KEY, None)
+    if not flash:
+        return
+    if flash.get("created"):
+        st.success(f"{flash['created']}건을 할당했습니다.")
+    if flash.get("skipped"):
+        st.info(f"{flash['skipped']}건은 이미 같은 할당이 있어 건너뛰었습니다.")
+    if flash.get("deleted"):
+        ids = ", ".join(str(i) for i in flash["deleted"])
+        st.success(f"{len(flash['deleted'])}건을 삭제했습니다. (ID: {ids})")
+    if flash.get("protected"):
+        st.info(
+            f"{len(flash['protected'])}건은 평가 결과가 있어 건너뛰었습니다. "
+            "지우려면 확인 체크박스를 켜세요."
+        )
 
 
 def render(user: User) -> None:
     st.title("관리자")
+    _render_flash()
     tab_dashboard, tab_assign, tab_export = st.tabs(
         ["📊 진도율 대시보드", "🗂 평가 작업 할당", "⬇️ CSV 추출"]
     )
@@ -48,20 +74,24 @@ def _render_dashboard() -> None:
                 "전문의": f"{row.doctor_name} ({row.doctor_id})",
                 "할당 건수": row.assigned,
                 "완료 건수": row.completed,
-                "전체 턴": row.total_turns,
-                "완료 턴": row.completed_turns,
                 "진행률(%)": row.progress_pct,
+                "완료 턴": row.completed_turns,
+                "열어본 턴": row.total_turns,
             }
             for row in progress
         ],
         use_container_width=True,
         hide_index=True,
     )
+    st.caption(
+        "진행률 = 완료 건수 / 할당 건수. "
+        "'열어본 턴' 은 전문의가 실제로 연 세션의 턴 수라, 아직 열지 않은 할당은 0 이다."
+    )
 
-    total_turns = sum(r.total_turns for r in progress)
-    done_turns = sum(r.completed_turns for r in progress)
-    overall = round(done_turns / total_turns * 100, 1) if total_turns else 0.0
-    st.markdown("**전체 진행률**")
+    assigned = sum(r.assigned for r in progress)
+    completed = sum(r.completed for r in progress)
+    overall = round(completed / assigned * 100, 1) if assigned else 0.0
+    st.markdown(f"**전체 진행률** — {completed} / {assigned}건")
     progress_bar(overall)
 
     st.subheader("할당 현황")
@@ -147,22 +177,16 @@ def _render_delete(assignments: list[Assignment]) -> None:
                 deleted, protected = admin_service.delete_assignments(
                     conn, list(target_ids), force=force
                 )
-            if deleted:
-                st.success(f"{len(deleted)}건을 삭제했습니다. (ID: {', '.join(map(str, deleted))})")
-            if protected:
-                st.info(
-                    f"{len(protected)}건은 평가 결과가 있어 건너뛰었습니다. "
-                    "지우려면 위 체크박스를 켜세요."
-                )
+            # rerun 이 화면을 다시 그리므로, 결과는 세션에 담아 다음 실행에서 보여준다.
+            st.session_state[_FLASH_KEY] = {
+                "deleted": deleted,
+                "protected": [p.assignment.id for p in protected],
+            }
             st.session_state["admin_delete_nonce"] = nonce + 1
             st.rerun()
 
 
 # --- 작업 할당 -------------------------------------------------------------
-
-
-def _pool_from_state(key: str) -> list[str]:
-    return st.session_state.get(key, [])
 
 
 def _selected_students() -> set[str]:
@@ -268,31 +292,55 @@ def _render_assign() -> None:
     st.markdown("#### 학생 선택")
     selected_students = _render_student_picker()
 
-    col_session, col_date = st.columns(2)
-    with col_session:
-        session_id = st.text_input(
-            "세션 ID (선택)",
-            key="admin_session_id",
-            placeholder="비우면 해당 날짜의 전체 세션",
-        )
-    with col_date:
-        chat_date = st.text_input(
-            "조회 날짜 (YY.MM.DD)", value=datetime.now().strftime("%y.%m.%d")
-        )
+    # 학생을 고르면 그 학생이 실시한 척도검사가 전부 할당 대상이 된다.
+    # 관리자가 날짜를 따로 입력하지 않는다.
+    targets: list[tuple[str, str, str]] = []
+    if selected_students:
+        try:
+            sessions = session_directory.list_sessions(selected_students)
+        except SessionDirectoryError as exc:
+            st.error(str(exc))
+            return
+        targets = admin_service.build_targets(sessions)
+        _render_session_summary(selected_students, sessions)
 
-    targets = admin_service.build_targets(
-        list(selected_students), [session_id] if session_id else [], chat_date
-    )
     st.caption(f"생성될 작업: **{len(targets)}건**")
 
     if st.button("작업 생성", type="primary", disabled=not targets):
         with connection() as conn:
             created, skipped = admin_service.create_assignments(conn, doctor_id, targets)
-        if created:
-            st.success(f"{len(created)}건을 할당했습니다.")
-        if skipped:
-            st.info(f"{skipped}건은 이미 같은 할당이 있어 건너뛰었습니다.")
+        # rerun 이 화면을 다시 그리므로, 결과는 세션에 담아 다음 실행에서 보여준다.
+        st.session_state[_FLASH_KEY] = {"created": len(created), "skipped": skipped}
         st.rerun()
+
+
+def _render_session_summary(student_ids: list[str], sessions: list[ScaleSession]) -> None:
+    """학생별 척도검사 건수와, 검사 이력이 없는 학생을 알려준다."""
+    grouped = session_directory.group_by_student(sessions)
+    empty = [sid for sid in student_ids if sid not in grouped]
+
+    st.dataframe(
+        [
+            {
+                "학생 ID": student_id,
+                "척도검사 수": len(grouped.get(student_id, [])),
+                "최초 검사일": min(s.session_date for s in grouped[student_id]).isoformat()
+                if student_id in grouped
+                else "-",
+                "최종 검사일": max(s.session_date for s in grouped[student_id]).isoformat()
+                if student_id in grouped
+                else "-",
+            }
+            for student_id in student_ids
+        ],
+        use_container_width=True,
+        hide_index=True,
+    )
+    if empty:
+        st.warning(
+            f"{len(empty)}명은 척도검사 이력이 없어 할당되지 않습니다: "
+            + ", ".join(sid[:12] + "…" for sid in empty)
+        )
 
 
 # --- CSV 추출 --------------------------------------------------------------

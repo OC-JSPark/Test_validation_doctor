@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import csv
 import io
+from datetime import date
 
 import pytest
 
-from app.models import QATurn
+from app.models import QATurn, ScaleSession
 from app.repositories import assignments as assignments_repo
 from app.repositories import evaluations as evaluations_repo
 from app.services import admin as admin_service
@@ -18,30 +19,46 @@ pytestmark = pytest.mark.db
 # --- build_targets (순수 로직) --------------------------------------------
 
 
-def test_학생과_세션의_모든_조합이_만들어진다():
-    targets = admin_service.build_targets(["s1", "s2"], ["a", "b"], "26.08.31")
-    assert targets == [
-        ("s1", "a", "26.08.31"),
-        ("s1", "b", "26.08.31"),
-        ("s2", "a", "26.08.31"),
-        ("s2", "b", "26.08.31"),
+def test_척도검사마다_할당_대상이_하나씩_만들어진다():
+    """학생을 고르면 그 학생이 실시한 검사가 전부 대상이 된다."""
+    sessions = [
+        ScaleSession("s1", "sess-a", date(2026, 8, 6)),
+        ScaleSession("s1", "sess-b", date(2026, 8, 21)),
+        ScaleSession("s2", "sess-c", date(2026, 8, 25)),
+    ]
+
+    assert admin_service.build_targets(sessions) == [
+        ("s1", "sess-a", "26.08.06"),
+        ("s1", "sess-b", "26.08.21"),
+        ("s2", "sess-c", "26.08.25"),
     ]
 
 
-def test_세션을_안_고르면_학생당_한_건():
-    assert admin_service.build_targets(["s1"], [], "26.08.31") == [("s1", "", "26.08.31")]
+def test_검사일이_외부API_날짜형식으로_변환된다():
+    session = ScaleSession("s1", "sess-a", date(2026, 9, 4))
+    assert session.chat_date == "26.09.04"
+    assert admin_service.build_targets([session])[0][2] == "26.09.04"
 
 
-def test_공백과_중복은_정리된다():
-    targets = admin_service.build_targets([" s1 ", "s1", ""], [" a "], " 26.08.31 ")
-    assert targets == [("s1", "a", "26.08.31")]
+def test_중복_검사는_한_번만_남는다():
+    same = ScaleSession("s1", "sess-a", date(2026, 8, 6))
+    assert len(admin_service.build_targets([same, same])) == 1
+
+
+def test_검사가_없으면_대상도_없다():
+    assert admin_service.build_targets([]) == []
 
 
 # --- 할당 등록 -------------------------------------------------------------
 
 
 def test_일괄_할당_등록(conn, doctor):
-    targets = admin_service.build_targets(["s1", "s2"], ["sess"], "26.08.31")
+    targets = admin_service.build_targets(
+        [
+            ScaleSession("s1", "sess-a", date(2026, 8, 31)),
+            ScaleSession("s2", "sess-b", date(2026, 8, 31)),
+        ]
+    )
     created, skipped = admin_service.create_assignments(conn, doctor.user_id, targets)
 
     assert len(created) == 2
@@ -49,7 +66,7 @@ def test_일괄_할당_등록(conn, doctor):
 
 
 def test_이미_있는_할당은_건너뛴다(conn, doctor):
-    targets = admin_service.build_targets(["s1"], ["sess"], "d")
+    targets = admin_service.build_targets([ScaleSession("s1", "sess", date(2026, 8, 31))])
     admin_service.create_assignments(conn, doctor.user_id, targets)
 
     created, skipped = admin_service.create_assignments(conn, doctor.user_id, targets)
@@ -65,7 +82,33 @@ def test_없는_전문의에게는_할당할_수_없다(conn):
 # --- 진도율 대시보드 --------------------------------------------------------
 
 
-def test_전문의별_진행률이_턴_기준으로_집계된다(conn, doctor):
+def test_아직_열지_않은_할당이_있어도_진행률이_부풀지_않는다(conn, doctor):
+    """실제 화면에서 발견된 회귀.
+
+    턴 기준으로 계산하면, 아직 열지 않아 total_turns=0 인 할당이 분모에서
+    빠져 39건 중 1건을 끝낸 전문의가 100% 로 보였다.
+    """
+    done = assignments_repo.create_assignment(conn, doctor.user_id, "s1", "x", "d")
+    evaluations_repo.sync_turns(conn, done.id, [QATurn(0, "q", "a")])
+    assignments_repo.update_total_turns(conn, done.id, 1)
+    evaluations_repo.save_evaluation(
+        conn, done.id, 0, doctor_score="4점", doctor_opinion="사유"
+    )
+    assignments_repo.refresh_progress(conn, done.id)
+    assignments_repo.mark_completed(conn, done.id)
+    # 아직 열지 않은 할당 3건 (total_turns = 0)
+    for i in range(3):
+        assignments_repo.create_assignment(conn, doctor.user_id, f"unopened{i}", "x", "d")
+
+    row = next(r for r in admin_service.doctor_progress(conn) if r.doctor_id == doctor.user_id)
+
+    assert row.assigned == 4
+    assert row.completed == 1
+    assert row.progress_pct == 25.0  # 건 기준. 턴 기준이면 100.0 이 나왔다
+    assert row.turn_progress_pct == 100.0  # 열어본 할당에 한정한 보조 지표
+
+
+def test_전문의별_진행률이_건_기준으로_집계된다(conn, doctor):
     a1 = assignments_repo.create_assignment(conn, doctor.user_id, "s1", "x", "d")
     a2 = assignments_repo.create_assignment(conn, doctor.user_id, "s2", "x", "d")
     for assignment in (a1, a2):

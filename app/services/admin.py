@@ -9,7 +9,7 @@ from datetime import datetime
 
 import psycopg
 
-from app.models import Assignment, STATUS_COMPLETED
+from app.models import Assignment, ScaleSession, STATUS_COMPLETED
 from app.repositories import assignments as assignments_repo
 from app.repositories import evaluations as evaluations_repo
 from app.repositories import users as users_repo
@@ -39,34 +39,40 @@ class DoctorProgress:
 
     @property
     def progress_pct(self) -> float:
-        """턴 기준 진행률(%). 할당된 턴 수를 아직 모르면 건 수 기준으로 대체한다."""
-        if self.total_turns > 0:
-            return round(self.completed_turns / self.total_turns * 100, 1)
-        if self.assigned > 0:
-            return round(self.completed / self.assigned * 100, 1)
-        return 0.0
+        """진행률(%) = 완료 건수 / 할당 건수 (SPEC.md §5).
+
+        턴 기준으로 계산하면 안 된다. 할당의 전체 턴 수는 전문의가 그 세션을
+        처음 열어 외부 API 를 호출해야 알 수 있어서, 아직 열지 않은 할당은
+        `total_turns = 0` 이다. 턴 기준으로 나누면 열어본 할당만 분모에 들어가
+        39건 중 1건을 끝낸 전문의가 100% 로 보인다.
+        """
+        if self.assigned <= 0:
+            return 0.0
+        return round(self.completed / self.assigned * 100, 1)
+
+    @property
+    def turn_progress_pct(self) -> float:
+        """열어본 할당에 한정한 턴 기준 진행률(%). 참고용 보조 지표."""
+        if self.total_turns <= 0:
+            return 0.0
+        return round(self.completed_turns / self.total_turns * 100, 1)
 
 
-def build_targets(
-    student_ids: list[str], session_ids: list[str], chat_date: str
-) -> list[tuple[str, str, str]]:
-    """관리자가 선택한 학생/세션 조합을 (student_id, session_id, date) 목록으로 만든다.
+def build_targets(sessions: list[ScaleSession]) -> list[tuple[str, str, str]]:
+    """척도검사 목록을 (student_id, session_id, chat_date) 할당 대상으로 바꾼다.
 
-    세션을 하나도 고르지 않으면 세션 지정 없이(빈 문자열) 학생당 1건을 만든다.
+    학생을 고르면 그 학생이 실시한 척도검사가 **전부** 할당 대상이 되므로,
+    관리자가 날짜를 따로 입력하지 않는다. 날짜는 각 검사 실시일에서 나온다.
+
     중복 조합은 순서를 유지한 채 한 번만 남긴다.
     """
-    students = [s.strip() for s in student_ids if s and s.strip()]
-    sessions = [s.strip() for s in session_ids if s and s.strip()] or [""]
-    date = (chat_date or "").strip()
-
     targets: list[tuple[str, str, str]] = []
     seen: set[tuple[str, str, str]] = set()
-    for student in students:
-        for session in sessions:
-            key = (student, session, date)
-            if key not in seen:
-                seen.add(key)
-                targets.append(key)
+    for session in sessions:
+        key = (session.student_id, session.session_id, session.chat_date)
+        if key not in seen:
+            seen.add(key)
+            targets.append(key)
     return targets
 
 
