@@ -11,6 +11,7 @@ import pytest
 from app.models import QATurn, ScaleSession
 from app.repositories import assignments as assignments_repo
 from app.repositories import evaluations as evaluations_repo
+from app.repositories import users as users_repo
 from app.services import admin as admin_service
 
 pytestmark = pytest.mark.db
@@ -27,7 +28,9 @@ def test_척도검사마다_할당_대상이_하나씩_만들어진다():
         ScaleSession("s2", "sess-c", date(2026, 8, 25)),
     ]
 
-    assert admin_service.build_targets(sessions) == [
+    targets = admin_service.build_targets(sessions)
+
+    assert [(t.student_id, t.session_id, t.chat_date) for t in targets] == [
         ("s1", "sess-a", "26.08.06"),
         ("s1", "sess-b", "26.08.21"),
         ("s2", "sess-c", "26.08.25"),
@@ -37,7 +40,23 @@ def test_척도검사마다_할당_대상이_하나씩_만들어진다():
 def test_검사일이_외부API_날짜형식으로_변환된다():
     session = ScaleSession("s1", "sess-a", date(2026, 9, 4))
     assert session.chat_date == "26.09.04"
-    assert admin_service.build_targets([session])[0][2] == "26.09.04"
+    assert admin_service.build_targets([session])[0].chat_date == "26.09.04"
+
+
+def test_세션에서_판별한_척도가_할당_대상에_실린다():
+    session = ScaleSession(
+        "s1", "sess-a", date(2026, 9, 4), stage="stress", scale_stage="1단계 KIDSCREEN-10"
+    )
+    assert admin_service.build_targets([session])[0].scale_stage == "1단계 KIDSCREEN-10"
+
+
+def test_척도를_판별하지_못한_세션도_할당된다():
+    """stage 를 모른다고 검사를 건너뛰면 안 된다. 전문의가 직접 고르게 둔다."""
+    session = ScaleSession("s1", "sess-a", date(2026, 9, 4))
+    target = admin_service.build_targets([session])[0]
+
+    assert target.scale_stage is None
+    assert target.session_id == "sess-a"
 
 
 def test_중복_검사는_한_번만_남는다():
@@ -247,6 +266,62 @@ def test_삭제된_할당은_CSV_에서도_사라진다(conn, doctor):
 
 def _read_csv(payload: bytes) -> list[list[str]]:
     return list(csv.reader(io.StringIO(payload.decode("utf-8-sig"))))
+
+
+def test_CSV_는_기본적으로_전_전문의_일괄이다(conn, doctor):
+    """관리자 CSV 는 특정 전문의가 아니라 완료된 평가 전체를 담는다."""
+    other = users_repo.upsert_user(conn, "other_doc", "다른 전문의", "DOCTOR", "pw")
+    for owner, question in ((doctor, "내 질문"), (other, "남의 질문")):
+        assignment = assignments_repo.create_assignment(
+            conn, owner.user_id, f"stu-{owner.user_id}", "x", "d"
+        )
+        evaluations_repo.sync_turns(conn, assignment.id, [QATurn(0, question, "답변")])
+        evaluations_repo.save_evaluation(
+            conn, assignment.id, 0, doctor_score="4점", doctor_opinion="사유"
+        )
+        assignments_repo.mark_completed(conn, assignment.id)
+
+    csv_text = admin_service.export_csv(conn).decode("utf-8-sig")
+
+    assert "내 질문" in csv_text
+    assert "남의 질문" in csv_text
+
+
+def test_전문의를_지정하면_그_사람_것만_추출된다(conn, doctor):
+    other = users_repo.upsert_user(conn, "other_doc2", "다른 전문의", "DOCTOR", "pw")
+    for owner, question in ((doctor, "내 질문"), (other, "남의 질문")):
+        assignment = assignments_repo.create_assignment(
+            conn, owner.user_id, f"stu2-{owner.user_id}", "x", "d"
+        )
+        evaluations_repo.sync_turns(conn, assignment.id, [QATurn(0, question, "답변")])
+        evaluations_repo.save_evaluation(
+            conn, assignment.id, 0, doctor_score="4점", doctor_opinion="사유"
+        )
+        assignments_repo.mark_completed(conn, assignment.id)
+
+    csv_text = admin_service.export_csv(
+        conn, doctor_ids=[doctor.user_id]
+    ).decode("utf-8-sig")
+
+    assert "내 질문" in csv_text
+    assert "남의 질문" not in csv_text
+
+
+def test_턴에_척도가_없으면_세션에서_판별한_척도로_채운다(conn, doctor):
+    assignment = assignments_repo.create_assignment(
+        conn, doctor.user_id, "stu-scale", "x", "d", "1단계 KIDSCREEN-10"
+    )
+    evaluations_repo.sync_turns(conn, assignment.id, [QATurn(0, "질문", "답변")])
+    # 전문의가 척도를 따로 고르지 않은 채 점수/사유만 입력
+    evaluations_repo.save_evaluation(
+        conn, assignment.id, 0, doctor_score="4점", doctor_opinion="사유"
+    )
+    assignments_repo.mark_completed(conn, assignment.id)
+
+    rows = _read_csv(admin_service.export_csv(conn))
+    row = next(r for r in rows[1:] if r[2] == "질문")
+
+    assert row[1] == "1단계 KIDSCREEN-10"
 
 
 def test_CSV_헤더는_명세대로다(conn):

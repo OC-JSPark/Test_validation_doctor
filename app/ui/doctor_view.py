@@ -177,13 +177,19 @@ def _render_evaluation(evaluation_set: EvaluationSet) -> None:
     if locked:
         st.success("최종 완료된 평가입니다 (수정 잠금).")
 
+    # 척도 기본값: 턴에 저장된 값 → 할당(세션)에서 판별한 값 → 첫 번째 선택지 순.
     stage_options = list(settings.scale_stages)
+    if assignment.scale_stage and assignment.scale_stage not in stage_options:
+        # 대화 엔진이 알려준 척도가 설정 목록에 없더라도 버리지 않는다.
+        stage_options.append(assignment.scale_stage)
+    default_stage = current.scale_stage or assignment.scale_stage or stage_options[0]
+
     stage_key = f"stage_{assignment.id}_{turn_index}"
     # 위젯 값은 세션 상태로 관리한다. 최초 렌더 때만 DB 값으로 채우고,
     # 이후에는 사용자가 입력한 값이 살아 있어야 한다.
     if stage_key not in st.session_state:
         st.session_state[stage_key] = (
-            current.scale_stage if current.scale_stage in stage_options else stage_options[0]
+            default_stage if default_stage in stage_options else stage_options[0]
         )
     st.selectbox(
         "진단 단계 (척도)",
@@ -192,6 +198,9 @@ def _render_evaluation(evaluation_set: EvaluationSet) -> None:
         disabled=locked,
         on_change=_autosave,
         args=(assignment.id, turn_index),
+        help="대화 엔진이 판별한 척도가 기본으로 선택됩니다. 다르면 바꿔주세요."
+        if assignment.scale_stage
+        else "이 세션의 척도를 판별하지 못했습니다. 직접 선택해 주세요.",
     )
 
     # Body: Q&A(읽기 전용) + 평가 입력
@@ -203,7 +212,9 @@ def _render_evaluation(evaluation_set: EvaluationSet) -> None:
         st.success(current.user_answer or "(답변 없음)")
 
     with body_right:
-        score_options = [NO_SCORE] + list(settings.score_options)
+        # 점수 선택지는 척도마다 다르다 (KIDSCREEN-10 은 1점이 'Never').
+        selected_stage = st.session_state.get(stage_key, default_stage)
+        score_options = [NO_SCORE] + list(settings.score_options_for(selected_stage))
         score_key = f"score_{assignment.id}_{turn_index}"
         if score_key not in st.session_state:
             st.session_state[score_key] = (

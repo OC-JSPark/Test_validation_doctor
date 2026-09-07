@@ -13,7 +13,7 @@ from app.models import (
 
 _COLUMNS = """
     a.id, a.doctor_id, a.student_id, a.session_id, a.chat_date,
-    a.total_turns, a.completed_turns, a.status,
+    a.total_turns, a.completed_turns, a.status, a.scale_stage,
     a.created_at, a.updated_at, a.completed_at
 """
 
@@ -30,6 +30,7 @@ def _to_assignment(row: dict | None) -> Assignment | None:
         total_turns=row["total_turns"],
         completed_turns=row["completed_turns"] or 0,
         status=row["status"],
+        scale_stage=row.get("scale_stage"),
         created_at=row.get("created_at"),
         updated_at=row.get("updated_at"),
         completed_at=row.get("completed_at"),
@@ -43,6 +44,7 @@ def create_assignment(
     student_id: str,
     session_id: str,
     chat_date: str = "",
+    scale_stage: str | None = None,
 ) -> Assignment | None:
     """할당 생성. 이미 같은 (전문의, 학생, 세션, 날짜) 할당이 있으면 None.
 
@@ -51,14 +53,14 @@ def create_assignment(
     row = conn.execute(
         """
         INSERT INTO evaluation_assignments
-            (doctor_id, student_id, session_id, chat_date, status)
-        VALUES (%s, %s, %s, %s, %s)
+            (doctor_id, student_id, session_id, chat_date, status, scale_stage)
+        VALUES (%s, %s, %s, %s, %s, %s)
         ON CONFLICT (doctor_id, student_id, session_id, chat_date) DO NOTHING
         RETURNING id, doctor_id, student_id, session_id, chat_date,
-                  total_turns, completed_turns, status,
+                  total_turns, completed_turns, status, scale_stage,
                   created_at, updated_at, completed_at
         """,
-        (doctor_id, student_id, session_id, chat_date, STATUS_PENDING),
+        (doctor_id, student_id, session_id, chat_date, STATUS_PENDING, scale_stage),
     ).fetchone()
     return _to_assignment(row)
 

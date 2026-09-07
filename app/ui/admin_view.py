@@ -330,6 +330,9 @@ def _render_session_summary(student_ids: list[str], sessions: list[ScaleSession]
                 "최종 검사일": max(s.session_date for s in grouped[student_id]).isoformat()
                 if student_id in grouped
                 else "-",
+                "척도 판별됨": sum(
+                    1 for s in grouped.get(student_id, []) if s.scale_stage
+                ),
             }
             for student_id in student_ids
         ],
@@ -351,18 +354,33 @@ def _render_export() -> None:
     st.caption("상태가 COMPLETED 인 할당의 모든 턴이 포함됩니다.")
 
     with connection() as conn:
-        payload = admin_service.export_csv(conn)
+        doctors = users_repo.list_doctors(conn)
 
+    # 기본은 전 전문의 일괄. 필요하면 특정 전문의만 골라 뽑는다.
+    selected = st.multiselect(
+        "전문의 선택 (비우면 전체)",
+        [d.user_id for d in doctors],
+        format_func=lambda uid: next(
+            f"{d.name} ({d.user_id})" for d in doctors if d.user_id == uid
+        ),
+        key="admin_export_doctors",
+    )
+
+    with connection() as conn:
+        payload = admin_service.export_csv(conn, doctor_ids=list(selected) or None)
+
+    scope = f"{len(selected)}명" if selected else f"전체 {len(doctors)}명"
     line_count = max(payload.decode("utf-8-sig").count("\n") - 1, 0)
     if line_count == 0:
-        st.info("아직 완료된 평가가 없습니다.")
+        st.info(f"{scope} 기준으로 아직 완료된 평가가 없습니다.")
     else:
-        st.success(f"{line_count}개 턴이 추출 가능합니다.")
+        st.success(f"{scope}의 완료 평가 {line_count}개 턴을 추출합니다.")
 
+    suffix = "_".join(selected) if selected else "all"
     st.download_button(
         "CSV 다운로드",
         data=payload,
-        file_name=f"doctor_evaluations_{datetime.now():%Y%m%d_%H%M%S}.csv",
+        file_name=f"doctor_evaluations_{suffix}_{datetime.now():%Y%m%d_%H%M%S}.csv",
         mime="text/csv",
         disabled=line_count == 0,
     )

@@ -23,13 +23,22 @@ from app.config import get_settings
 from app.models import ScaleSession
 
 # 스키마가 다른 DB 로 옮길 경우 여기만 고치면 된다.
+#
+# checkpoints.checkpoint_json 의 channel_values.stage 에 그 세션이 진행한
+# 척도가 남는다(stress / depression / severe …). 세션과 1:1 이라 LEFT JOIN 으로
+# 붙여서, 관리자가 척도를 손으로 고르지 않아도 되게 한다.
 _LIST_SQL = """
-    SELECT user_id    AS student_id,
-           session_id AS session_id,
-           date       AS session_date
-    FROM sessions
-    WHERE user_id = ANY(%s)
-    ORDER BY user_id, date, session_id
+    SELECT s.user_id    AS student_id,
+           s.session_id AS session_id,
+           s.date       AS session_date,
+           c.checkpoint_json -> 'channel_values' ->> 'stage' AS stage
+    FROM sessions s
+    LEFT JOIN checkpoints c
+           ON c.user_id = s.user_id
+          AND c.date = s.date
+          AND c.session_id = s.session_id
+    WHERE s.user_id = ANY(%s)
+    ORDER BY s.user_id, s.date, s.session_id
 """
 
 _pool: ConnectionPool | None = None
@@ -85,11 +94,14 @@ def list_sessions(
             f"원인: {exc}"
         ) from exc
 
+    settings = get_settings()
     return [
         ScaleSession(
             student_id=row["student_id"],
             session_id=row["session_id"],
             session_date=row["session_date"],
+            stage=row.get("stage"),
+            scale_stage=settings.scale_for_stage(row.get("stage")),
         )
         for row in rows
     ]

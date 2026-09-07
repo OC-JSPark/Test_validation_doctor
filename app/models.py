@@ -98,6 +98,8 @@ class ScaleSession:
     student_id: str
     session_id: str
     session_date: date
+    stage: str | None = None  # AI 대화 엔진의 원본 stage 값 (stress / depression …)
+    scale_stage: str | None = None  # 위 stage 를 척도명으로 옮긴 값
 
     @property
     def chat_date(self) -> str:
@@ -129,6 +131,7 @@ class Assignment:
     total_turns: int
     completed_turns: int
     status: str
+    scale_stage: str | None = None  # 세션에서 판별한 척도 (전문의 화면 기본값)
     created_at: datetime | None = None
     updated_at: datetime | None = None
     completed_at: datetime | None = None

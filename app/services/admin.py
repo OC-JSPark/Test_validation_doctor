@@ -27,6 +27,16 @@ CSV_HEADERS = [
 
 
 @dataclass(frozen=True)
+class AssignmentTarget:
+    """할당 1건을 만들 재료 (학생 · 세션 · 검사일 · 척도)."""
+
+    student_id: str
+    session_id: str
+    chat_date: str
+    scale_stage: str | None = None
+
+
+@dataclass(frozen=True)
 class DoctorProgress:
     """전문의 1명의 진도 요약."""
 
@@ -58,26 +68,26 @@ class DoctorProgress:
         return round(self.completed_turns / self.total_turns * 100, 1)
 
 
-def build_targets(sessions: list[ScaleSession]) -> list[tuple[str, str, str]]:
-    """척도검사 목록을 (student_id, session_id, chat_date) 할당 대상으로 바꾼다.
+def build_targets(sessions: list[ScaleSession]) -> list[AssignmentTarget]:
+    """척도검사 목록을 할당 대상으로 바꾼다.
 
     학생을 고르면 그 학생이 실시한 척도검사가 **전부** 할당 대상이 되므로,
-    관리자가 날짜를 따로 입력하지 않는다. 날짜는 각 검사 실시일에서 나온다.
+    관리자가 날짜를 따로 입력하지 않는다. 날짜와 척도는 각 검사에서 나온다.
 
     중복 조합은 순서를 유지한 채 한 번만 남긴다.
     """
-    targets: list[tuple[str, str, str]] = []
+    targets: list[AssignmentTarget] = []
     seen: set[tuple[str, str, str]] = set()
     for session in sessions:
         key = (session.student_id, session.session_id, session.chat_date)
         if key not in seen:
             seen.add(key)
-            targets.append(key)
+            targets.append(AssignmentTarget(*key, scale_stage=session.scale_stage))
     return targets
 
 
 def create_assignments(
-    conn: psycopg.Connection, doctor_id: str, targets: list[tuple[str, str, str]]
+    conn: psycopg.Connection, doctor_id: str, targets: list[AssignmentTarget]
 ) -> tuple[list[Assignment], int]:
     """POST /api/admin/assignments — 일괄 등록.
 
@@ -88,9 +98,14 @@ def create_assignments(
 
     created: list[Assignment] = []
     skipped = 0
-    for student_id, session_id, chat_date in targets:
+    for target in targets:
         assignment = assignments_repo.create_assignment(
-            conn, doctor_id, student_id, session_id, chat_date
+            conn,
+            doctor_id,
+            target.student_id,
+            target.session_id,
+            target.chat_date,
+            target.scale_stage,
         )
         if assignment is None:
             skipped += 1
@@ -183,15 +198,18 @@ def _format_datetime(value: datetime | None) -> str:
     return value.strftime("%Y-%m-%d %H:%M:%S") if value else ""
 
 
-def export_csv(conn: psycopg.Connection) -> bytes:
+def export_csv(
+    conn: psycopg.Connection, *, doctor_ids: list[str] | None = None
+) -> bytes:
     """GET /api/admin/export/csv — 완료된 평가 데이터를 CSV 바이트로.
 
+    `doctor_ids` 를 주면 해당 전문의 것만, 주지 않으면 **전 전문의 일괄** 추출한다.
     Excel 에서 한글이 깨지지 않도록 UTF-8 BOM 을 붙인다.
     """
     buffer = io.StringIO()
     writer = csv.writer(buffer, lineterminator="\n")
     writer.writerow(CSV_HEADERS)
-    for row in evaluations_repo.list_completed_rows(conn):
+    for row in evaluations_repo.list_completed_rows(conn, doctor_ids=doctor_ids):
         writer.writerow(
             [
                 row["evaluation_code"] or "",
