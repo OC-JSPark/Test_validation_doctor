@@ -131,12 +131,18 @@ def save_evaluation(
     return _to_evaluation(row)
 
 
-def list_completed_rows(conn: psycopg.Connection) -> list[dict]:
-    """CSV 추출용: COMPLETED 상태 할당의 모든 턴을 담당 전문의·완료일시와 함께."""
-    return conn.execute(
-        """
+def list_completed_rows(
+    conn: psycopg.Connection, *, doctor_ids: list[str] | None = None
+) -> list[dict]:
+    """CSV 추출용: COMPLETED 상태 할당의 모든 턴을 담당 전문의·완료일시와 함께.
+
+    `doctor_ids` 를 주면 해당 전문의 것만. 주지 않으면 **전 전문의 일괄**.
+
+    턴에 척도가 비어 있으면 할당(세션)에서 판별한 척도로 채워 내보낸다.
+    """
+    sql = """
         SELECT e.evaluation_code,
-               e.scale_stage,
+               COALESCE(NULLIF(TRIM(e.scale_stage), ''), a.scale_stage) AS scale_stage,
                e.ai_question,
                e.user_answer,
                e.doctor_score,
@@ -147,6 +153,10 @@ def list_completed_rows(conn: psycopg.Connection) -> list[dict]:
         JOIN evaluation_assignments a ON a.id = e.assignment_id
         JOIN users u ON u.user_id = a.doctor_id
         WHERE a.status = 'COMPLETED'
-        ORDER BY a.id, e.turn_index
-        """
-    ).fetchall()
+    """
+    params: tuple = ()
+    if doctor_ids:
+        sql += " AND a.doctor_id = ANY(%s)"
+        params = (doctor_ids,)
+    sql += " ORDER BY a.id, e.turn_index"
+    return conn.execute(sql, params).fetchall()
