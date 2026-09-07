@@ -7,26 +7,108 @@ AIMIE Kids 하루톡 대화에 대한 **전문의 평가 시스템** (Streamlit 
 
 ## 아키텍처
 
-```
-[외부 서비스 API]  ──(GET /api-kids/risk-students/student/chat, 읽기 전용)──┐
-                                                                          ▼
-                                          [Streamlit 앱] ── teacher/student 메시지를
-                                                 │          Q&A 턴으로 파싱
-                                                 ▼
-                                    [신규 로컬 DB: validation_db]
-                              users / evaluation_assignments / doctor_evaluations
+데이터 출처가 셋으로 나뉜다. **읽기 전용 소스 2개 + 외부 API 1개**에서 재료를 모아,
+이 시스템이 만들어내는 결과는 전부 신규 DB 하나에만 쌓는다.
+
+| 출처 | 무엇을 | 접근 |
+| --- | --- | --- |
+| `aimie_kids_dev_app` | 학생 명부 | 읽기 전용 (`STUDENT_SOURCE_DATABASE_URL`) |
+| `aimie_kids_dev_ai` | 척도검사 목록 · 어떤 척도였는지 | 읽기 전용 (`SESSION_SOURCE_DATABASE_URL`) |
+| 외부 API | 하루톡 대화 본문 | 읽기 전용 (`EXTERNAL_API_BASE_URL`) |
+| **`validation_db`** | 계정 · 할당 · 평가 결과 | **읽기/쓰기** |
+
+두 DB 조회는 커넥션이 `read_only` 로 열려 쓰기 쿼리가 DB 단계에서 거부된다.
+접근 지점도 `app/student_directory.py` / `app/session_directory.py` 두 곳뿐이라,
+인스턴스 DB 로 옮길 때는 접속 문자열과 그 파일의 쿼리 상수만 바꾸면 된다.
+
+### 데이터 관계도
+
+세 곳의 데이터를 **학생 UUID** 와 **세션 키**로 이어 붙인다.
+DB 가 서로 달라 물리적 외래키는 걸 수 없고, 아래 점선이 논리적 참조다.
+
+```mermaid
+erDiagram
+    t_user ||--|| t_student : "user_seq"
+    t_user {
+        bigint  user_seq  PK
+        char32  user_uuid UK "= 외부 API 의 studentId"
+        text    name
+    }
+    t_student {
+        bigint  student_seq PK
+        bigint  user_seq    FK
+        varchar nickname
+        varchar school_name
+        smallint grade
+    }
+
+    sessions ||--o| checkpoints : "user_id+date+session_id"
+    sessions ||--o{ chat_messages_vector : "같은 키"
+    sessions {
+        text session_id PK "척도검사 1건"
+        text user_id    PK "= t_user.user_uuid"
+        date date       PK
+    }
+    checkpoints {
+        json checkpoint_json "channel_values.stage → 척도 판별"
+    }
+
+    users ||--o{ evaluation_assignments : "doctor_id"
+    evaluation_assignments ||--o{ doctor_evaluations : "assignment_id"
+    users {
+        varchar user_id PK
+        varchar role    "ADMIN / DOCTOR"
+    }
+    evaluation_assignments {
+        serial  id          PK
+        varchar doctor_id   FK
+        varchar student_id  "→ t_user.user_uuid (논리 참조)"
+        varchar session_id  "→ sessions.session_id (논리 참조)"
+        varchar chat_date   "→ sessions.date (YY.MM.DD)"
+        varchar scale_stage "checkpoints 에서 판별한 척도"
+        varchar status      "PENDING / IN_PROGRESS / COMPLETED"
+    }
+    doctor_evaluations {
+        serial  id             PK
+        int     assignment_id  FK
+        int     turn_index     "Q&A 턴 순서"
+        text    ai_question    "API 에서 가져온 원본"
+        text    user_answer    "API 에서 가져온 원본"
+        varchar doctor_score   "전문의 입력"
+        text    doctor_opinion "전문의 입력"
+    }
 ```
 
-- **대화 내역**은 외부 API 호출로만 읽는다 (`aimie_kids_ai` 에 직접 붙지 않는다).
-- **학생 명부**는 학생 DB(`aimie_kids_dev_app`)를 **읽기 전용**으로 조회한다.
-  관리자 화면의 학생 선택 목록이 여기서 나온다 — `app/student_directory.py` 한 곳으로만 접근한다.
-- **척도검사 목록**은 세션 DB(`aimie_kids_ai.sessions`)를 **읽기 전용**으로 조회한다.
-  관리자가 학생을 고르면 그 학생이 실시한 검사 전체가 할당 대상이 되므로 날짜를 입력하지 않는다.
-  외부 API 에는 세션 목록 엔드포인트가 없어 DB 에서 읽는다 — `app/session_directory.py`.
-- 두 조회 모두 커넥션이 `read_only` 로 열려 쓰기 쿼리가 DB 단계에서 거부된다.
-  추후 인스턴스 DB 로 옮길 때는 `STUDENT_SOURCE_DATABASE_URL` /
-  `SESSION_SOURCE_DATABASE_URL` 만 바꾸면 된다.
-- 이 시스템이 **만들어내는** 데이터는 전부 신규 DB `validation_db` 에만 저장한다.
+**연결 고리는 `user_uuid` 하나다.** `t_user.user_uuid` = `sessions.user_id` = 외부 API 의
+`studentId` 가 모두 같은 32자 값이라 세 곳을 이어붙일 수 있다.
+`sessions` 는 `(user_id, date, session_id)` 복합키이고, `checkpoints` 가 같은 키로 1:1 대응한다.
+
+### 데이터 흐름
+
+```mermaid
+flowchart TD
+    A["관리자: 학생 체크"] --> B["학생 명부 조회<br/>t_user ⋈ t_student"]
+    B --> C["그 학생의 척도검사 전체 조회<br/>sessions ⋈ checkpoints"]
+    C --> D["stage → 척도 판별<br/>stress → KIDSCREEN-10<br/>depression → PHQ-A"]
+    D --> E["할당 생성<br/>검사 1건 = 할당 1건"]
+    E --> F["전문의: 할당 선택"]
+    F --> G["외부 API 로 대화 조회<br/>studentId + sessionId + date"]
+    G --> H["teacher/student 메시지를<br/>Q&A 턴으로 파싱"]
+    H --> I["턴별 점수·소견 입력<br/>이동할 때마다 자동저장"]
+    I --> J["모든 턴 입력 시 최종 완료<br/>status = COMPLETED"]
+    J --> K["관리자: CSV 추출"]
+
+    B -.읽기 전용.-> DB1[("aimie_kids_dev_app")]
+    C -.읽기 전용.-> DB2[("aimie_kids_dev_ai")]
+    G -.읽기 전용.-> API(["외부 API"])
+    E -.쓰기.-> DB3[("validation_db")]
+    I -.쓰기.-> DB3
+    J -.쓰기.-> DB3
+    K -.읽기.-> DB3
+```
+
+핵심은 **관리자가 날짜도 척도도 입력하지 않는다**는 점이다.
+학생만 고르면 검사 목록과 각 검사의 날짜·척도가 DB 에서 따라온다.
 
 ## 빠른 시작
 
