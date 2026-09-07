@@ -46,26 +46,6 @@ def test_빈_목록은_빈_딕셔너리():
 
 
 @pytest.fixture
-def session_conn():
-    url = get_settings().session_db_url
-    try:
-        conn = psycopg.connect(url, row_factory=dict_row)
-    except psycopg.OperationalError as exc:
-        pytest.fail(
-            "척도검사 DB(aimie_kids_ai) 에 연결할 수 없습니다. "
-            "docker compose up -d test-db 로 컨테이너를 기동하세요.\n"
-            f"원인: {exc}",
-            pytrace=False,
-        )
-    conn.read_only = True
-    try:
-        yield conn
-    finally:
-        conn.rollback()
-        conn.close()
-
-
-@pytest.fixture
 def sample_student_id(session_conn) -> str:
     """검사 이력이 가장 많은 학생 하나."""
     row = session_conn.execute(

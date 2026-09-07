@@ -19,7 +19,7 @@ DEFAULT_DATABASE_URL = "postgresql://aimieapi:aimieapi@localhost:15432/validatio
 
 # 학생 명부 조회용 DB (읽기 전용). 지금은 로컬에 복원된 aimie_kids_app 을 보고,
 # 추후 인스턴스 DB 로 옮길 때는 이 접속 문자열만 바꾸면 된다.
-DEFAULT_STUDENT_DB_URL = "postgresql://aimieapi:aimieapi@localhost:15432/aimie_kids_app"
+DEFAULT_STUDENT_DB_URL = "postgresql://aimieapi:aimieapi@localhost:15432/aimie_kids_dev_app"
 
 # 척도검사(세션) 목록 조회용 DB (읽기 전용). 학생 명부와 다른 DB 에 있다.
 DEFAULT_SESSION_DB_URL = "postgresql://aimieapi:aimieapi@localhost:15432/aimie_kids_ai"
