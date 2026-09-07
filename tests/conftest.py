@@ -54,6 +54,27 @@ def conn(database_url: str) -> Iterator[psycopg.Connection]:
 
 
 @pytest.fixture
+def session_conn(database_url: str) -> Iterator[psycopg.Connection]:
+    """척도검사 DB(aimie_kids_ai) 커넥션. 읽기 전용."""
+    url = get_settings().session_db_url
+    try:
+        connection = psycopg.connect(url, row_factory=dict_row)
+    except psycopg.OperationalError as exc:
+        pytest.fail(
+            "척도검사 DB(aimie_kids_ai) 에 연결할 수 없습니다. "
+            "docker compose up -d test-db 로 컨테이너를 기동하세요.\n"
+            f"원인: {exc}",
+            pytrace=False,
+        )
+    connection.read_only = True
+    try:
+        yield connection
+    finally:
+        connection.rollback()
+        connection.close()
+
+
+@pytest.fixture
 def doctor(conn: psycopg.Connection):
     """테스트 전용 전문의 계정 (매번 다른 ID)."""
     user_id = f"test_doctor_{uuid.uuid4().hex[:8]}"

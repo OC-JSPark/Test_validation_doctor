@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 
 from dotenv import load_dotenv
@@ -29,21 +29,47 @@ DEFAULT_API_BASE_URL = "https://admin-dev.aimie-m.com"
 DEFAULT_LOGIN_PATH = "/api-kids/adm/login"
 DEFAULT_CHAT_PATH = "/api-kids/risk-students/student/chat"
 
-# 전문의 점수/조치 선택지. 실제 척도가 확정되면 .env 의 DOCTOR_SCORE_OPTIONS 로 덮어쓴다.
+# 전문의 점수/조치 기본 선택지. .env 의 DOCTOR_SCORE_OPTIONS 로 덮어쓴다.
 DEFAULT_SCORE_OPTIONS = (
-    "Not at all (1점)",
+    "Not at all (0점)",
+    "Slightly (1점)",
+    "Moderately (2점)",
+    "Very (3점)",
+    "Extremely (4점)",
+)
+
+# KIDSCREEN-10 은 1점 항목이 'Never' 다 (나머지 척도는 기본 선택지와 동일).
+KIDSCREEN_SCORE_OPTIONS = (
+    "Never (1점)",
     "Slightly (2점)",
     "Moderately (3점)",
     "Very (4점)",
     "Extremely (5점)",
 )
 
-# 진단 단계(척도) 선택지. 마찬가지로 SCALE_STAGE_OPTIONS 로 덮어쓸 수 있다.
+# 진단 단계(척도) 선택지. SCALE_STAGE_OPTIONS 로 덮어쓸 수 있다.
 DEFAULT_SCALE_STAGES = (
     "1단계 KIDSCREEN-10",
     "2단계 PHQ-2",
-    "3단계 PHQ-9",
+    "3단계 PHQ-A",
 )
+
+# 척도별 점수 선택지. 여기에 없는 척도는 DEFAULT_SCORE_OPTIONS 를 쓴다.
+# 키는 척도명에 포함된 문자열로 매칭하므로 '1단계 ' 같은 접두사가 붙어도 동작한다.
+SCALE_SCORE_OPTIONS: dict[str, tuple[str, ...]] = {
+    "KIDSCREEN": KIDSCREEN_SCORE_OPTIONS,
+}
+
+# AI 대화 엔진의 stage 값 → 척도명 매핑.
+# 근거: aimie_kids_ai.checkpoints 의 channel_values.scores 세부 문항
+#   stress     → KIDSCREEN-10 문항 (felt_sad, felt_lonely, got_on_well_at_school …)
+#   depression → PHQ-9 문항 9개
+#   severe     → 신체증상 문항 (back_pain, dizziness, chest_pain …)
+DEFAULT_STAGE_TO_SCALE: dict[str, str] = {
+    "stress": "1단계 KIDSCREEN-10",
+    "ealry": "2단계 PHQ-2",
+    "depression": "3단계 PHQ-A",
+}
 
 
 def _split(value: str | None, fallback: tuple[str, ...]) -> tuple[str, ...]:
@@ -69,6 +95,29 @@ class Settings:
     api_login_path: str = DEFAULT_LOGIN_PATH
     api_chat_path: str = DEFAULT_CHAT_PATH
     api_login_type: str = "TEACHER"
+    scale_score_options: dict[str, tuple[str, ...]] = field(
+        default_factory=lambda: dict(SCALE_SCORE_OPTIONS)
+    )
+    stage_to_scale: dict[str, str] = field(
+        default_factory=lambda: dict(DEFAULT_STAGE_TO_SCALE)
+    )
+
+    def score_options_for(self, scale_stage: str | None) -> tuple[str, ...]:
+        """척도에 맞는 점수 선택지. 매칭되는 척도가 없으면 기본 선택지.
+
+        KIDSCREEN-10 은 1점이 'Never', 나머지는 'Not at all' 로 시작한다.
+        """
+        if scale_stage:
+            for keyword, options in self.scale_score_options.items():
+                if keyword.lower() in scale_stage.lower():
+                    return options
+        return self.score_options
+
+    def scale_for_stage(self, stage: str | None) -> str | None:
+        """AI 대화 엔진의 stage 값을 척도명으로 바꾼다. 모르는 stage 는 None."""
+        if not stage:
+            return None
+        return self.stage_to_scale.get(stage.strip().lower())
 
     @classmethod
     def from_env(cls) -> "Settings":
