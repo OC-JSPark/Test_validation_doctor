@@ -22,7 +22,7 @@ DEFAULT_DATABASE_URL = "postgresql://aimieapi:aimieapi@localhost:15432/validatio
 DEFAULT_STUDENT_DB_URL = "postgresql://aimieapi:aimieapi@localhost:15432/aimie_kids_dev_app"
 
 # 척도검사(세션) 목록 조회용 DB (읽기 전용). 학생 명부와 다른 DB 에 있다.
-DEFAULT_SESSION_DB_URL = "postgresql://aimieapi:aimieapi@localhost:15432/aimie_kids_ai"
+DEFAULT_SESSION_DB_URL = "postgresql://aimieapi:aimieapi@localhost:15432/aimie_kids_dev_ai"
 DEFAULT_API_BASE_URL = "https://admin-dev.aimie-m.com"
 
 # 외부 API 경로. 게이트웨이 프리픽스가 환경마다 달라질 수 있어 환경변수로 덮어쓸 수 있게 둔다.
@@ -61,13 +61,17 @@ SCALE_SCORE_OPTIONS: dict[str, tuple[str, ...]] = {
 }
 
 # AI 대화 엔진의 stage 값 → 척도명 매핑.
-# 근거: aimie_kids_ai.checkpoints 의 channel_values.scores 세부 문항
-#   stress     → KIDSCREEN-10 문항 (felt_sad, felt_lonely, got_on_well_at_school …)
-#   depression → PHQ-9 문항 9개
-#   severe     → 신체증상 문항 (back_pain, dizziness, chest_pain …)
+# 근거: aimie_kids_dev_ai.checkpoints 의 channel_values.stage / scores 세부 문항
+#   stress            → KIDSCREEN-10 문항 (felt_sad, felt_lonely, got_on_well_at_school …)
+#   early_depression  → 선별 단계 (PHQ-2)
+#   depression        → PHQ 우울 문항 9개
+#
+# 척도가 아닌 진행 상태(opening / continue / finish)는 매핑하지 않는다 — 판별 안 함.
+# `severe`(신체증상: back_pain, dizziness, chest_pain …) 는 위 3단계에 속하지 않아
+# 아직 매핑하지 않았다. 별도 척도로 다룰지 확정되면 여기에 추가한다.
 DEFAULT_STAGE_TO_SCALE: dict[str, str] = {
     "stress": "1단계 KIDSCREEN-10",
-    "ealry": "2단계 PHQ-2",
+    "early_depression": "2단계 PHQ-2",
     "depression": "3단계 PHQ-A",
 }
 
