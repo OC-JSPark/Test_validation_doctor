@@ -89,7 +89,7 @@ erDiagram
 flowchart TD
     A["관리자: 학생 체크"] --> B["학생 명부 조회<br/>t_user ⋈ t_student"]
     B --> C["그 학생의 척도검사 전체 조회<br/>sessions ⋈ checkpoints"]
-    C --> D["stage → 척도 판별<br/>stress → KIDSCREEN-10<br/>depression → PHQ-A"]
+    C --> D["stage → 척도 판별<br/>stress → PHQ-stress<br/>depression → PHQ-A"]
     D --> E["할당 생성<br/>검사 1건 = 할당 1건"]
     E --> F["전문의: 할당 선택"]
     F --> G["외부 API 로 대화 조회<br/>studentId + sessionId + date"]
@@ -183,7 +183,7 @@ DB 테스트는 실제 `validation_db` 에 붙어 트랜잭션 롤백으로 격�
 
 | 대화 엔진 stage | 척도 | 근거 (scores 세부 문항) |
 | --- | --- | --- |
-| `stress` | 1단계 KIDSCREEN-10 | felt_sad, felt_lonely, got_on_well_at_school … |
+| `stress` | 1단계 PHQ-stress | felt_sad, felt_lonely, got_on_well_at_school … |
 | `depression` | 3단계 PHQ-A | PHQ-9 문항 9개 |
 | `opening` `finish` `continue` | (판별 안 함) | 척도가 아니라 진행 상태 |
 
@@ -191,10 +191,11 @@ DB 테스트는 실제 `validation_db` 에 붙어 트랜잭션 롤백으로 격�
 
 | 척도 | 선택지 |
 | --- | --- |
-| KIDSCREEN-10 | Never (1점) ~ Extremely (5점) |
-| 그 외 (PHQ 계열) | Not at all (0점) ~ Extremely (4점) — `DOCTOR_SCORE_OPTIONS` |
+| PHQ-stress | Not at all (0점) · Bothered a little (1점) · Bothered a lot (2점) — **3점 척도** |
+| 그 외 (PHQ-2 · PHQ-A) | Not at all (0점) ~ Extremely (4점) — 5점 척도, `DOCTOR_SCORE_OPTIONS` |
 
 매핑은 `app/config.py` 의 `DEFAULT_STAGE_TO_SCALE` / `SCALE_SCORE_OPTIONS` 에서 바꾼다.
+척도마다 선택지 **개수**가 다를 수 있다 (PHQ-stress 3개, 나머지 5개).
 
 ---
 
