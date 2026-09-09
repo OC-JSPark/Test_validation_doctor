@@ -38,18 +38,16 @@ DEFAULT_SCORE_OPTIONS = (
     "Extremely (4점)",
 )
 
-# KIDSCREEN-10 은 1점 항목이 'Never' 다 (나머지 척도는 기본 선택지와 동일).
-KIDSCREEN_SCORE_OPTIONS = (
-    "Never (1점)",
-    "Slightly (2점)",
-    "Moderately (3점)",
-    "Very (4점)",
-    "Extremely (5점)",
+# PHQ-stress 는 3점 척도다 (다른 척도는 5점 기본 선택지).
+PHQ_STRESS_SCORE_OPTIONS = (
+    "Not at all (0점)",
+    "Bothered a little (1점)",
+    "Bothered a lot (2점)",
 )
 
 # 진단 단계(척도) 선택지. SCALE_STAGE_OPTIONS 로 덮어쓸 수 있다.
 DEFAULT_SCALE_STAGES = (
-    "1단계 KIDSCREEN-10",
+    "1단계 PHQ-stress",
     "2단계 PHQ-2",
     "3단계 PHQ-A",
 )
@@ -57,12 +55,12 @@ DEFAULT_SCALE_STAGES = (
 # 척도별 점수 선택지. 여기에 없는 척도는 DEFAULT_SCORE_OPTIONS 를 쓴다.
 # 키는 척도명에 포함된 문자열로 매칭하므로 '1단계 ' 같은 접두사가 붙어도 동작한다.
 SCALE_SCORE_OPTIONS: dict[str, tuple[str, ...]] = {
-    "KIDSCREEN": KIDSCREEN_SCORE_OPTIONS,
+    "PHQ-stress": PHQ_STRESS_SCORE_OPTIONS,
 }
 
 # AI 대화 엔진의 stage 값 → 척도명 매핑.
 # 근거: aimie_kids_dev_ai.checkpoints 의 channel_values.stage / scores 세부 문항
-#   stress            → KIDSCREEN-10 문항 (felt_sad, felt_lonely, got_on_well_at_school …)
+#   stress            → PHQ-stress 문항 (felt_sad, felt_lonely, got_on_well_at_school …)
 #   early_depression  → 선별 단계 (PHQ-2)
 #   depression        → PHQ 우울 문항 9개
 #
@@ -70,7 +68,7 @@ SCALE_SCORE_OPTIONS: dict[str, tuple[str, ...]] = {
 # `severe`(신체증상: back_pain, dizziness, chest_pain …) 는 위 3단계에 속하지 않아
 # 아직 매핑하지 않았다. 별도 척도로 다룰지 확정되면 여기에 추가한다.
 DEFAULT_STAGE_TO_SCALE: dict[str, str] = {
-    "stress": "1단계 KIDSCREEN-10",
+    "stress": "1단계 PHQ-stress",
     "early_depression": "2단계 PHQ-2",
     "depression": "3단계 PHQ-A",
 }
@@ -109,7 +107,7 @@ class Settings:
     def score_options_for(self, scale_stage: str | None) -> tuple[str, ...]:
         """척도에 맞는 점수 선택지. 매칭되는 척도가 없으면 기본 선택지.
 
-        KIDSCREEN-10 은 1점이 'Never', 나머지는 'Not at all' 로 시작한다.
+        PHQ-stress 는 0~2점 3점 척도, 나머지는 0~4점 5점 척도다.
         """
         if scale_stage:
             for keyword, options in self.scale_score_options.items():

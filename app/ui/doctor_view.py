@@ -212,7 +212,7 @@ def _render_evaluation(evaluation_set: EvaluationSet) -> None:
         st.success(current.user_answer or "(답변 없음)")
 
     with body_right:
-        # 점수 선택지는 척도마다 다르다 (KIDSCREEN-10 은 1점이 'Never').
+        # 점수 선택지는 척도마다 다르다 (PHQ-stress 는 0~2점 3점 척도).
         selected_stage = st.session_state.get(stage_key, default_stage)
         score_options = [NO_SCORE] + list(settings.score_options_for(selected_stage))
         score_key = f"score_{assignment.id}_{turn_index}"

@@ -45,9 +45,9 @@ def test_검사일이_외부API_날짜형식으로_변환된다():
 
 def test_세션에서_판별한_척도가_할당_대상에_실린다():
     session = ScaleSession(
-        "s1", "sess-a", date(2026, 9, 4), stage="stress", scale_stage="1단계 KIDSCREEN-10"
+        "s1", "sess-a", date(2026, 9, 4), stage="stress", scale_stage="1단계 PHQ-stress"
     )
-    assert admin_service.build_targets([session])[0].scale_stage == "1단계 KIDSCREEN-10"
+    assert admin_service.build_targets([session])[0].scale_stage == "1단계 PHQ-stress"
 
 
 def test_척도를_판별하지_못한_세션도_할당된다():
@@ -309,7 +309,7 @@ def test_전문의를_지정하면_그_사람_것만_추출된다(conn, doctor):
 
 def test_턴에_척도가_없으면_세션에서_판별한_척도로_채운다(conn, doctor):
     assignment = assignments_repo.create_assignment(
-        conn, doctor.user_id, "stu-scale", "x", "d", "1단계 KIDSCREEN-10"
+        conn, doctor.user_id, "stu-scale", "x", "d", "1단계 PHQ-stress"
     )
     evaluations_repo.sync_turns(conn, assignment.id, [QATurn(0, "질문", "답변")])
     # 전문의가 척도를 따로 고르지 않은 채 점수/사유만 입력
@@ -321,7 +321,7 @@ def test_턴에_척도가_없으면_세션에서_판별한_척도로_채운다(c
     rows = _read_csv(admin_service.export_csv(conn))
     row = next(r for r in rows[1:] if r[2] == "질문")
 
-    assert row[1] == "1단계 KIDSCREEN-10"
+    assert row[1] == "1단계 PHQ-stress"
 
 
 def test_CSV_헤더는_명세대로다(conn):
@@ -351,7 +351,7 @@ def test_완료된_평가만_CSV_에_들어간다(conn, doctor):
         0,
         doctor_score="Very (4점)",
         doctor_opinion="수면 문제 호소",
-        scale_stage="1단계 KIDSCREEN-10",
+        scale_stage="1단계 PHQ-stress",
     )
 
     # 아직 미완료 → CSV 에 없다
@@ -362,7 +362,7 @@ def test_완료된_평가만_CSV_에_들어간다(conn, doctor):
     rows = _read_csv(admin_service.export_csv(conn))
     row = next(r for r in rows[1:] if r[2] == "AI 질문")
 
-    assert row[1] == "1단계 KIDSCREEN-10"
+    assert row[1] == "1단계 PHQ-stress"
     assert row[3] == "학생 답변"
     assert row[4] == "Very (4점)"
     assert row[5] == "수면 문제 호소"

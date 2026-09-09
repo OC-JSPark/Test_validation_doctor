@@ -161,15 +161,58 @@ def test_소견을_나중에_입력해도_점수가_유지된다(committed_conn,
 
     at = _login(ui_doctor, "pw1234")
     score_box = next(s for s in at.selectbox if "점수" in s.label)
-    score_box.set_value("Very (4점)").run()
+    # 점수 라벨은 척도·설정에 따라 달라지므로 화면에 실제로 뜬 선택지에서 고른다.
+    picked = next(o for o in score_box.options if o != "(미선택)")
+    score_box.set_value(picked).run()
     at.text_area[0].set_value("나중에 입력한 소견").run()
 
     assert not at.exception
     saved = evaluations_repo.get_evaluation(conn, assignment.id, 0)
-    assert saved.doctor_score == "Very (4점)"
+    assert saved.doctor_score == picked
     assert saved.doctor_opinion == "나중에 입력한 소견"
     # 두 항목이 다 채워졌으므로 [최종 완료] 가 활성화되어야 한다
     assert next(b for b in at.button if "최종 완료" in b.label).disabled is False
+
+
+def test_PHQ_stress_할당은_점수가_3개만_보인다(committed_conn, ui_doctor):
+    """척도에 따라 점수 선택지 개수가 달라진다 (PHQ-stress 3점 척도)."""
+    conn, _ = committed_conn
+    assignment = assignments_repo.create_assignment(
+        conn, ui_doctor, "stu-stress", "sess-1", "26.08.31", "1단계 PHQ-stress"
+    )
+    evaluations_repo.sync_turns(conn, assignment.id, [QATurn(0, "질문", "답변")])
+    assignments_repo.update_total_turns(conn, assignment.id, 1)
+
+    at = _login(ui_doctor, "pw1234")
+
+    assert not at.exception
+    stage_box = next(s for s in at.selectbox if "진단 단계" in s.label)
+    assert stage_box.value == "1단계 PHQ-stress"  # 세션에서 판별한 척도가 기본값
+
+    score_box = next(s for s in at.selectbox if "점수" in s.label)
+    picks = [o for o in score_box.options if o != "(미선택)"]
+    assert picks == [
+        "Not at all (0점)",
+        "Bothered a little (1점)",
+        "Bothered a lot (2점)",
+    ]
+
+
+def test_PHQ_2_할당은_기본_5점_선택지를_쓴다(committed_conn, ui_doctor):
+    conn, _ = committed_conn
+    assignment = assignments_repo.create_assignment(
+        conn, ui_doctor, "stu-phq2", "sess-1", "26.08.31", "2단계 PHQ-2"
+    )
+    evaluations_repo.sync_turns(conn, assignment.id, [QATurn(0, "질문", "답변")])
+    assignments_repo.update_total_turns(conn, assignment.id, 1)
+
+    at = _login(ui_doctor, "pw1234")
+    score_box = next(s for s in at.selectbox if "점수" in s.label)
+    picks = [o for o in score_box.options if o != "(미선택)"]
+
+    assert not at.exception
+    assert len(picks) == 5
+    assert picks[0] == "Not at all (0점)"
 
 
 def test_판단이유_입력시_자동저장된다(committed_conn, ui_doctor):
