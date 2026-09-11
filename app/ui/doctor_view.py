@@ -207,9 +207,21 @@ def _render_evaluation(evaluation_set: EvaluationSet) -> None:
     body_left, body_right = st.columns(2)
     with body_left:
         st.markdown("#### 🤖 AI 질문")
-        st.info(current.ai_question or "(질문 없음)")
+        if (current.ai_question or "").strip():
+            st.info(current.ai_question)
+        else:
+            # 외부 API 가 해당 턴의 teacher 메시지를 주지 않은 경우다.
+            # 판단 근거가 반쪽이므로, 빈 칸이 아니라 이유를 알려 준다.
+            st.warning(
+                "이 턴의 AI 질문이 외부 API 응답에 없습니다. "
+                "대화가 중간에 끊긴 세션일 수 있으니, 답변만으로 판단이 어려우면 "
+                "관리자에게 세션 확인을 요청하세요."
+            )
         st.markdown("#### 👤 학생 답변")
-        st.success(current.user_answer or "(답변 없음)")
+        if (current.user_answer or "").strip():
+            st.success(current.user_answer)
+        else:
+            st.warning("이 턴의 학생 답변이 외부 API 응답에 없습니다.")
 
     with body_right:
         # 점수 선택지는 척도마다 다르다 (PHQ-stress 는 0~2점 3점 척도).
