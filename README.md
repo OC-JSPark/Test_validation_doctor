@@ -198,54 +198,108 @@ DB 테스트는 실제 `validation_db` 에 붙어 트랜잭션 롤백으로 격�
 척도마다 선택지 **개수**가 다를 수 있다 (PHQ-stress 3개, 나머지 5개).
 
 ---
-
 ## stg 배포
 
-**코드만 올려서는 뜨지 않는다.** DB 주소 외에도 아래가 필요하다.
+### 자동으로 되나? — **아니다**
 
-### 1. 사전 준비 (한 번만)
+코드만 올리고 DB 주소만 바꿔서는 뜨지 않는다. 이유는 세 가지다.
+
+1. **평가 DB 가 stg 에 없다.** `validation_db` 는 이 시스템 전용 신규 DB 라
+   누군가 만들어 주기 전에는 존재하지 않는다. 주소만 바꾸면 "없는 DB" 를 가리킨다.
+2. **접속 문자열 기본값이 전부 `localhost` 다.** 환경변수를 빠뜨려도 앱은
+   에러 없이 뜨고, 조용히 `localhost:15432` 로 붙으러 간다 (§배포 함정 참고).
+3. **읽기 소스가 2개 더 있다.** 학생 명부 DB, 척도검사 세션 DB 도 각각
+   stg 주소로 바꿔야 한다. 대화 API 주소·계정까지 합치면 바꿀 곳이 5군데다.
+
+---
+
+### 1. 바꿔야 하는 환경변수
+
+`.env` 는 커밋되지 않으므로 배포 서버에서 직접 만든다 (`cp .env.example .env`,
+권한은 `chmod 600`).
+
+**반드시 바꿔야 하는 것 — 안 바꾸면 조용히 localhost 로 붙는다**
+
+| 변수 | 무엇 | 기본값(위험) |
+| --- | --- | --- |
+| `VALIDATION_DATABASE_URL` | 평가 DB (읽기/쓰기) | `localhost:15432/validation_db` |
+| `STUDENT_SOURCE_DATABASE_URL` | 학생 명부 (읽기 전용) | `localhost:15432/aimie_kids_dev_app` |
+| `SESSION_SOURCE_DATABASE_URL` | 척도검사 목록 (읽기 전용) | `localhost:15432/aimie_kids_dev_ai` |
+| `EXTERNAL_API_BASE_URL` | 대화 API 호스트 | `https://admin-dev.aimie-m.com` |
+| `EXTERNAL_API_LOGIN_ID` / `_PASSWORD` | API 계정 | 없음 (비면 401) |
+| `SEED_ADMIN_PASSWORD` / `SEED_DOCTOR_PASSWORD` | 초기 계정 비밀번호 | `admin1234` / `doctor1234` ← **그대로 두면 안 된다** |
+
+읽기 전용 DB 2개는 **SELECT 권한만 있는 계정**을 따로 발급받는 편이 안전하다.
+앱이 커넥션을 `read_only` 로 열지만, 계정 권한으로 한 겹 더 막는 것이 낫다.
+
+**환경이 다르면 바꾸는 것**
+
+| 변수 | 언제 |
+| --- | --- |
+| `EXTERNAL_API_LOGIN_PATH` / `_CHAT_PATH` | 게이트웨이 프리픽스가 dev 와 다를 때 |
+| `EXTERNAL_API_LOGIN_TYPE` | 로그인 타입이 `TEACHER` 가 아닐 때 |
+| `EXTERNAL_API_TIMEOUT` | 기본 10초로 부족할 때 |
+| `SCALE_STAGE_OPTIONS` / `DOCTOR_SCORE_OPTIONS` | 척도명·점수 라벨을 바꿀 때 |
+| `SEED_DOCTOR_COUNT` | 전문의 계정을 3명보다 많이 만들 때 |
+
+**코드를 고쳐야 하는 것** (환경변수로 못 바꾼다)
+
+| 대상 | 파일 | 언제 |
+| --- | --- | --- |
+| `stage` → 척도 매핑 | `app/config.py` `DEFAULT_STAGE_TO_SCALE` | stg 대화 엔진의 `stage` 값이 dev 와 다를 때 |
+| 척도별 점수 선택지 | `app/config.py` `SCALE_SCORE_OPTIONS` | 척도를 추가할 때 |
+| 명부/세션 조회 쿼리 | `app/student_directory.py` / `app/session_directory.py` 의 `_LIST_SQL` | stg 스키마가 다를 때 |
+
+---
+
+### 2. 배포 절차
 
 ```bash
-# 1) 런타임
-#    Python 3.11+, uv 설치.  uv sync 로 의존성 설치 (uv.lock 그대로 재현)
+# 1) 런타임 — uv.lock 그대로 재현
 uv sync --frozen
 
-# 2) 평가 DB 생성 — 이 시스템 전용 신규 DB 다. 기존 DB 를 재사용하지 않는다.
+# 2) 평가 DB 생성 (최초 1회). 앱이 만들어 주지 않는다.
 psql -h <stg-db-host> -U <admin> -c "CREATE DATABASE validation_db"
 
-# 3) 스키마 + 계정
+# 3) 환경변수
+cp .env.example .env && chmod 600 .env   # 위 표대로 채운다
+
+# 4) 스키마 + 계정 — 멱등이라 배포할 때마다 그냥 다시 돌린다
 uv run python -m scripts.init_db --seed
 ```
 
-`scripts/init_db.py` 는 `sql/*.sql` 을 순서대로 실행한다. 전부 멱등이라
-배포할 때마다 그냥 다시 돌리면 된다 (스키마 변경 반영 포함).
+`scripts/init_db.py` 는 `sql/*.sql` 을 파일명 순서대로 실행한다.
+현재 3개이고 전부 멱등이라, 재실행해도 안전하고 **스키마 변경분이 자동 반영된다.**
 
-### 2. 환경변수 — DB 주소만 바꾸면 되는 게 아니다
+| 파일 | 내용 |
+| --- | --- |
+| `001_init_validation.sql` | 테이블 3개 생성 |
+| `002_add_assignment_scale_stage.sql` | 할당에 척도 컬럼 추가 |
+| `003_rename_kidscreen_to_phq_stress.sql` | 저장된 척도명 개명 |
 
-| 변수 | stg 에서 바꿔야 하나 | 비고 |
-| --- | --- | --- |
-| `VALIDATION_DATABASE_URL` | ✅ | **DB 를 새로 만들어야 한다.** 주소만 바꾸면 빈 DB 라 뜨지 않음 |
-| `STUDENT_SOURCE_DATABASE_URL` | ✅ | stg 학생 DB. **읽기 전용 계정**을 따로 발급받을 것 |
-| `SESSION_SOURCE_DATABASE_URL` | ✅ | stg 세션 DB (척도검사 목록) |
-| `EXTERNAL_API_BASE_URL` | ✅ | stg API 주소 |
-| `EXTERNAL_API_LOGIN_ID` / `_PASSWORD` | ✅ | stg 계정 |
-| `EXTERNAL_API_LOGIN_PATH` / `_CHAT_PATH` | 환경에 따라 | 게이트웨이 프리픽스가 다르면 |
-| `SEED_ADMIN_PASSWORD` / `SEED_DOCTOR_PASSWORD` | ✅ | **데모 비밀번호 그대로 두면 안 된다** |
-| `DOCTOR_SCORE_OPTIONS` / `SCALE_STAGE_OPTIONS` | 선택 | 척도 표기를 바꿀 때만 |
+---
 
-`.env` 는 커밋되지 않으므로 배포 대상 서버에서 직접 만든다 (`cp .env.example .env`).
-파일 권한은 `chmod 600` 으로 좁힌다.
+### 3. 배포 전 점검
 
-### 3. 네트워크 도달성
+```bash
+# 설정이 stg 를 가리키는지 눈으로 확인 (localhost 가 보이면 잘못된 것)
+uv run python -c "
+from app.config import get_settings; s = get_settings()
+for k in ('database_url','student_db_url','session_db_url','api_base_url'):
+    print(f'{k:18}', getattr(s, k))"
 
-앱이 붙는 곳이 4군데다. 방화벽/보안그룹에서 전부 열려 있어야 한다.
+# 외부 API 연동 — 로그인부터 턴 파싱까지
+uv run python -m scripts.check_api --student <studentId> --date 26.09.09
 
+# 테스트
+uv run pytest -m "not db"   # 순수 로직 (DB 불필요)
+uv run pytest               # DB 포함 전체
 ```
-Streamlit ─┬─→ validation_db          (읽기/쓰기)
-           ├─→ 학생 DB                 (읽기 전용)
-           ├─→ 세션 DB                 (읽기 전용)
-           └─→ 외부 API (HTTPS)        (읽기 전용)
-```
+
+마지막으로 **관리자 화면에서 학생 목록이 뜨는지** 확인한다. 목록이 비면
+명부 DB 연결이나 `user_type='STUDENT'` 필터를 의심한다.
+
+---
 
 ### 4. 상시 구동
 
@@ -253,13 +307,11 @@ Streamlit ─┬─→ validation_db          (읽기/쓰기)
 
 ```bash
 uv run streamlit run Test_validation_doctor.py \
-  --server.port 8501 \
-  --server.address 0.0.0.0 \
-  --server.headless true
+  --server.port 8501 --server.address 0.0.0.0 --server.headless true
 ```
 
-앞단에 nginx 를 두고 **HTTPS 로 종단**한다. 로그인 비밀번호가 평문으로 오가면 안 된다.
-WebSocket 을 쓰므로 프록시 설정에 `Upgrade` / `Connection` 헤더가 필요하다.
+앞단에 nginx 를 두고 **HTTPS 로 종단**한다 — 로그인 비밀번호가 평문으로 오가면 안 된다.
+WebSocket 을 쓰므로 `Upgrade` / `Connection` 헤더가 필요하다.
 
 ```nginx
 location / {
@@ -271,26 +323,47 @@ location / {
 }
 ```
 
-서브경로(`/validation/`)로 붙일 경우 `--server.baseUrlPath validation` 를 함께 준다.
+서브경로(`/validation/`)로 붙일 경우 `--server.baseUrlPath validation` 을 함께 준다.
 
-### 5. 배포 전 확인
+앱이 붙는 곳이 4군데다. 방화벽·보안그룹에서 전부 열려 있어야 한다.
 
-```bash
-uv run python -m scripts.check_api --student <studentId> --date 26.08.31  # 외부 API
-uv run pytest -m "not db"                                                 # 순수 로직
-uv run pytest                                                             # DB 포함 전체
 ```
-
-### 6. 알려진 제약 (배포 전에 판단할 것)
-
-- **로그인 시도 제한이 없다.** 계정 잠금·지연이 구현되어 있지 않으므로,
-  외부에 열 거라면 VPN/IP 제한 뒤에 두는 편이 안전하다.
-- **계정 관리 화면이 없다.** 전문의 계정은 `scripts/init_db.py --seed`
-  (`SEED_DOCTOR_COUNT`) 로만 만들 수 있고 비밀번호가 전원 동일하다.
-- **Streamlit 단일 프로세스**다. 동시 접속자가 많으면 CPU 1코어에 묶인다.
-  전문의 10명 수준이면 문제없지만, 그 이상이면 워커를 늘리는 구조가 필요하다.
-- **감사 로그가 없다.** 누가 언제 평가를 바꿨는지는 `updated_at` 뿐이다.
+Streamlit ─┬─→ validation_db   (읽기/쓰기)
+           ├─→ 학생 명부 DB      (읽기 전용)
+           ├─→ 세션 DB          (읽기 전용)
+           └─→ 대화 API (HTTPS)  (읽기 전용)
+```
 
 ---
 
-자세한 기능 명세는 `SPEC.md`, 작업 규칙은 `CLAUDE.md` 참고.
+### 5. 배포 함정 — 겪어 본 것들
+
+- **환경변수를 빠뜨려도 앱이 뜬다.** 기본값이 localhost 라 에러 대신 빈 화면이나
+  연결 실패가 나온다. 배포 직후 위 §3 의 설정 출력으로 눈으로 확인할 것.
+- **명부와 세션 DB 는 같은 환경 것이어야 한다.** dev 명부 + stg 세션처럼 섞이면
+  학생은 보이는데 척도검사가 0건이 되어 할당을 만들 수 없다.
+- **호스트 이름을 확인할 것.** dev 에서 `dev.aimie-m.com` 은 nginx 테스트 페이지만
+  떠 있어 모든 API 경로가 404 였다. 실제 호스트는 `admin-dev` 였다.
+- **`stage` 값이 환경마다 다를 수 있다.** dev 에서 `early_depression` 을 발견하기
+  전까지 2단계가 영영 판별되지 않았다. 배포 후 `checkpoints` 의 실제 `stage`
+  분포를 확인하고 매핑을 맞춘다.
+- **토큰은 만료된다.** 401 이면 한 번 재로그인 후 재시도하지만, 계정 정보가
+  비어 있으면 재시도할 수단이 없어 그대로 실패한다.
+
+---
+
+### 6. 배포 전 판단이 필요한 것
+
+기능이 아직 없어서, 운영 정책으로 메워야 하는 부분이다.
+
+| 항목 | 현재 상태 |
+| --- | --- |
+| 로그인 시도 제한 | **없다.** 외부에 열 거라면 VPN·IP 제한 뒤에 두는 편이 안전하다 |
+| 계정 관리 화면 | **없다.** 전문의 계정은 시드로만 만들 수 있고 비밀번호가 전원 동일하다 |
+| 감사 로그 | **없다.** 누가 언제 평가를 바꿨는지는 `updated_at` 뿐이다 |
+| 동시 접속 | Streamlit 단일 프로세스. 전문의 10명 수준은 괜찮지만 그 이상은 구조 변경 필요 |
+
+---
+
+자세한 기능 명세는 `SPEC.md`, 작업 규칙은 `CLAUDE.md`,
+구조·스키마·코드 리뷰는 `code_Review.md` 참고.
