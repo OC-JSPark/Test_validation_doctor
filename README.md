@@ -129,7 +129,10 @@ uv run python -m scripts.init_db --seed
 # 5) 외부 API 연동 점검 (로그인 → 대화 조회 → 턴 파싱)
 uv run python -m scripts.check_api --student <studentId> --date 26.08.31
 
-# 6) 앱 실행
+# 6) 배포 전 점검 (설정·DB·API·정합성 한 번에)
+uv run python -m scripts.preflight
+
+# 7) 앱 실행
 uv run streamlit run Test_validation_doctor.py
 ```
 
@@ -174,6 +177,8 @@ DB 테스트는 실제 `validation_db` 에 붙어 트랜잭션 롤백으로 격�
 | `app/ui/` | 로그인 / 관리자 / 전문의 화면 |
 | `sql/` | 스키마 마이그레이션 (멱등) |
 | `scripts/init_db.py` | 스키마 생성 + 데모 계정 시드 |
+| `scripts/preflight.py` | 배포 전 점검 (실패 시 종료 코드 1) |
+| `app/preflight.py` | 점검 판정 로직 (순수 함수) |
 
 ## 척도와 점수
 
@@ -279,24 +284,49 @@ uv run python -m scripts.init_db --seed
 
 ---
 
-### 3. 배포 전 점검
+### 3. 배포 전 점검 — `preflight`
+
+아래 §5 의 함정들을 한 번에 확인한다. **치명적 문제가 있으면 종료 코드 1** 을
+내므로 배포 파이프라인에서 게이트로 걸 수 있다.
 
 ```bash
-# 설정이 stg 를 가리키는지 눈으로 확인 (localhost 가 보이면 잘못된 것)
-uv run python -c "
-from app.config import get_settings; s = get_settings()
-for k in ('database_url','student_db_url','session_db_url','api_base_url'):
-    print(f'{k:18}', getattr(s, k))"
+uv run python -m scripts.preflight                       # 전체
+uv run python -m scripts.preflight --student <studentId> # 대화 조회까지
+uv run python -m scripts.preflight --no-api              # 외부 API 없이
+```
 
-# 외부 API 연동 — 로그인부터 턴 파싱까지
-uv run python -m scripts.check_api --student <studentId> --date 26.09.09
+검사 항목:
 
-# 테스트
+| # | 검사 | 실패하면 |
+| --- | --- | --- |
+| 1 | 접속 문자열이 코드 기본값(localhost)인지 | ⚠️ 경고 — stg 라면 환경변수 누락 |
+| 1 | API 호스트가 HTTPS 인지, 인증 수단이 있는지 | ❌ 인증 없으면 전부 401 |
+| 1 | 시드 비밀번호가 데모값 그대로인지 | ❌ 배포 불가 |
+| 2 | 평가 DB 접속 + 테이블 3개 존재 | ❌ `CREATE DATABASE` / `init_db` 필요 |
+| 3 | 명부·세션 DB 접속 + **쓰기가 실제로 거부되는지** | ❌ 연결 실패 / ⚠️ 쓰기가 열려 있음 |
+| 4 | 명부 학생 중 척도검사가 있는 비율 | ❌ 0명이면 두 DB 가 다른 환경 |
+| 4 | 세션의 실제 `stage` 값이 척도 매핑에 있는지 | ⚠️ 미매핑 stage 를 이름과 건수로 알려줌 |
+| 5 | API 로그인 + 대화 조회 + AI질문 유무 | ❌ 호스트·경로·계정 문제 |
+
+출력 예 (로컬 기준):
+
+```
+[4. 데이터 정합성]
+  ✅ 명부·세션 정합성   명부 2명 중 2명에게 척도검사가 있다
+  ⚠️  stage 매핑      매핑되지 않은 stage: severe(9건) — 이 세션들은 척도가 비어
+                     전문의가 직접 골라야 한다.
+```
+
+접속 문자열의 비밀번호는 가려서 출력하므로 로그에 남아도 안전하다.
+
+이어서 테스트도 돌린다.
+
+```bash
 uv run pytest -m "not db"   # 순수 로직 (DB 불필요)
 uv run pytest               # DB 포함 전체
 ```
 
-마지막으로 **관리자 화면에서 학생 목록이 뜨는지** 확인한다. 목록이 비면
+마지막으로 **관리자 화면에서 학생 목록이 뜨는지** 눈으로 확인한다. 목록이 비면
 명부 DB 연결이나 `user_type='STUDENT'` 필터를 의심한다.
 
 ---
@@ -338,17 +368,20 @@ Streamlit ─┬─→ validation_db   (읽기/쓰기)
 
 ### 5. 배포 함정 — 겪어 본 것들
 
-- **환경변수를 빠뜨려도 앱이 뜬다.** 기본값이 localhost 라 에러 대신 빈 화면이나
-  연결 실패가 나온다. 배포 직후 위 §3 의 설정 출력으로 눈으로 확인할 것.
-- **명부와 세션 DB 는 같은 환경 것이어야 한다.** dev 명부 + stg 세션처럼 섞이면
-  학생은 보이는데 척도검사가 0건이 되어 할당을 만들 수 없다.
-- **호스트 이름을 확인할 것.** dev 에서 `dev.aimie-m.com` 은 nginx 테스트 페이지만
-  떠 있어 모든 API 경로가 404 였다. 실제 호스트는 `admin-dev` 였다.
-- **`stage` 값이 환경마다 다를 수 있다.** dev 에서 `early_depression` 을 발견하기
-  전까지 2단계가 영영 판별되지 않았다. 배포 후 `checkpoints` 의 실제 `stage`
-  분포를 확인하고 매핑을 맞춘다.
-- **토큰은 만료된다.** 401 이면 한 번 재로그인 후 재시도하지만, 계정 정보가
-  비어 있으면 재시도할 수단이 없어 그대로 실패한다.
+전부 **조용히** 실패했던 것들이다. 그래서 §3 의 `preflight` 가 하나씩 잡아낸다.
+
+| 함정 | 왜 안 보이나 | 잡는 방법 |
+| --- | --- | --- |
+| **환경변수 누락** | 기본값이 localhost 라 앱이 에러 없이 뜬다 | `preflight` 가 기본값 사용을 경고 |
+| **명부·세션 DB 환경 불일치** | 학생은 보이는데 척도검사만 0건 | 교집합 0명이면 ❌ 실패 처리 |
+| **호스트 이름 오류** | `dev.aimie-m.com` 은 nginx 테스트 페이지라 전 경로 404. 실제는 `admin-dev` | API 로그인 검사 + 404 에 경로 확인 힌트 |
+| **`stage` 값이 환경마다 다름** | dev 에서 `early_depression` 을 찾기 전까지 2단계가 영영 비었다 | 미매핑 stage 를 이름·건수로 출력 |
+| **시드 비밀번호 방치** | 동작에는 문제가 없다 | 데모값이면 ❌ 실패 처리 |
+| **토큰 만료** | 캐시된 토큰으로 계속 401 | 401 이면 1회 재로그인 후 재시도 (구현됨) |
+| **AI 질문 누락** | 빈 칸이라 데이터 문제인지 버그인지 모른다 | 전문의 화면에 사유를 표시 (구현됨) |
+
+`preflight` 가 잡지 **못하는** 것도 있다. 미매핑 `stage` 를 어느 척도에 붙일지,
+읽기 전용 계정을 따로 발급할지 같은 판단은 사람이 해야 한다.
 
 ---
 
