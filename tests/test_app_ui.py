@@ -215,6 +215,22 @@ def test_PHQ_2_할당은_기본_5점_선택지를_쓴다(committed_conn, ui_doct
     assert picks[0] == "Not at all (0점)"
 
 
+def test_AI질문이_비면_빈칸_대신_이유를_알려준다(committed_conn, ui_doctor):
+    """외부 API 가 teacher 메시지를 누락한 턴. 전문의가 원인을 알 수 있어야 한다."""
+    conn, _ = committed_conn
+    assignment = assignments_repo.create_assignment(
+        conn, ui_doctor, "stu-noq", "sess-noq", "26.09.09"
+    )
+    # 질문 없이 답변만 있는 턴 (실제 API 응답에서 나온 형태)
+    evaluations_repo.sync_turns(conn, assignment.id, [QATurn(0, "", "답변만 있음")])
+    assignments_repo.update_total_turns(conn, assignment.id, 1)
+
+    at = _login(ui_doctor, "pw1234")
+
+    assert not at.exception
+    assert any("AI 질문이 외부 API 응답에 없습니다" in w.value for w in at.warning)
+
+
 def test_판단이유_입력시_자동저장된다(committed_conn, ui_doctor):
     conn, _ = committed_conn
     assignment = assignments_repo.create_assignment(conn, ui_doctor, "stu-4", "sess-1", "26.08.31")
@@ -240,6 +256,23 @@ def test_관리자_화면에_학생_체크박스_목록이_뜬다(ui_admin):
     assert at.checkbox, "학생 체크박스가 하나도 렌더링되지 않았습니다."
     assert any("전체 선택" in b.label for b in at.button)
     assert any("학생 검색" in t.label for t in at.text_input)
+
+
+def test_학생_체크박스에_실명이_표시된다(ui_admin):
+    """관리자는 닉네임이 아니라 실명으로 학생을 식별한다."""
+    at = _login(ui_admin, "pw1234")
+
+    students = student_directory.list_students()
+    if not students:
+        pytest.fail("학생 명부가 비어 있습니다.", pytrace=False)
+
+    labels = [c.label for c in at.checkbox]
+    assert not at.exception
+    for student in students:
+        assert student.name, f"{student.student_id} 의 실명이 비어 있습니다."
+        assert any(student.name in label for label in labels), (
+            f"체크박스에 실명 '{student.name}' 이 보이지 않습니다: {labels}"
+        )
 
 
 def test_학생을_체크하면_그_학생의_척도검사_수만큼_대상이_잡힌다(ui_admin):

@@ -60,12 +60,29 @@ class Student:
     school_name: str | None = None
     grade: int | None = None
     class_name: str | None = None
+    name: str | None = None  # 실명 (t_user.name). 닉네임과 다른 값이다
+
+    @property
+    def display_name(self) -> str:
+        """화면에 쓸 사람 이름. 실명 → 닉네임 → ID 앞자리 순으로 떨어진다."""
+        for candidate in (self.name, self.nickname):
+            if candidate and candidate.strip():
+                return candidate.strip()
+        return f"(이름없음) {self.student_id[:8]}…"
 
     @property
     def label(self) -> str:
-        """체크박스에 표시할 이름. 닉네임이 없으면 ID 앞부분으로 대체한다."""
-        name = (self.nickname or "").strip() or f"(이름없음) {self.student_id[:8]}…"
-        parts = [name]
+        """체크박스에 표시할 문자열.
+
+        관리자는 실명으로 학생을 식별하지만, 앱 화면과 대조할 때는 닉네임도
+        필요해서 둘 다 보여준다 (같으면 한 번만).
+        """
+        head = self.display_name
+        nickname = (self.nickname or "").strip()
+        if nickname and nickname != head:
+            head = f"{head} ({nickname})"
+
+        parts = [head]
         if self.school_name:
             school = self.school_name
             if self.grade:
@@ -76,13 +93,19 @@ class Student:
         return " · ".join(parts)
 
     def matches(self, query: str) -> bool:
-        """검색어가 이름/학교/ID 중 하나에 포함되면 True (대소문자 무시)."""
+        """검색어가 실명/닉네임/학교/ID 중 하나에 포함되면 True (대소문자 무시)."""
         needle = query.strip().lower()
         if not needle:
             return True
         haystack = " ".join(
             str(v).lower()
-            for v in (self.student_id, self.nickname, self.school_name, self.class_name)
+            for v in (
+                self.student_id,
+                self.name,
+                self.nickname,
+                self.school_name,
+                self.class_name,
+            )
             if v
         )
         return needle in haystack

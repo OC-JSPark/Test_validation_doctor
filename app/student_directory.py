@@ -23,14 +23,16 @@ from app.models import Student
 # 학생 명부 쿼리. 스키마가 다른 DB 로 옮길 경우 여기만 고치면 된다.
 _LIST_SQL = """
     SELECT u.user_uuid   AS student_id,
+           u.name        AS name,
            s.nickname    AS nickname,
            s.school_name AS school_name,
            s.grade       AS grade,
            s.class_name  AS class_name
     FROM t_user u
     JOIN t_student s ON s.user_seq = u.user_seq
-    WHERE u.is_deleted = 0
-    ORDER BY s.school_name NULLS LAST, s.grade, s.class_name, s.nickname
+    WHERE u.user_type = 'STUDENT'
+        AND u.is_deleted = 0
+    ORDER BY s.school_name NULLS LAST, s.grade, s.class_name, u.name
 """
 
 _pool: ConnectionPool | None = None
@@ -69,6 +71,7 @@ def close_pool() -> None:
 def _to_student(row: dict) -> Student:
     return Student(
         student_id=(row["student_id"] or "").strip(),
+        name=row.get("name"), #학생실명
         nickname=row.get("nickname"),
         school_name=row.get("school_name"),
         grade=row.get("grade"),
@@ -96,4 +99,7 @@ def list_students(conn: psycopg.Connection | None = None) -> list[Student]:
 
 def filter_students(students: list[Student], query: str) -> list[Student]:
     """이름/학교/ID 기준 검색 (순수 함수)."""
-    return [s for s in students if s.matches(query)]
+    if not query or not query.strip():
+        return students
+    q = query.strip().lower()
+    return [s for s in students if s.matches(q)]
