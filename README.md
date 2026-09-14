@@ -132,8 +132,8 @@ uv run python -m scripts.check_api --student <studentId> --date 26.08.31
 # 6) 배포 전 점검 (설정·DB·API·정합성 한 번에)
 uv run python -m scripts.preflight
 
-# 7) 앱 실행
-uv run streamlit run Test_validation_doctor.py
+# 7) 앱 실행 (서버는 8002, 로컬은 아무 포트나)
+uv run streamlit run Test_validation_doctor.py --server.port 8002
 ```
 
 ### 외부 API 접속 정보
@@ -150,8 +150,9 @@ uv run streamlit run Test_validation_doctor.py
 
 > `dev.aimie-m.com` 은 nginx 테스트 페이지만 떠 있어 모든 API 경로가 404 다. `admin-dev` 를 쓸 것.
 
-데모 계정: `admin / admin1234`, `doctor01~03 / doctor1234`
-(비밀번호는 `.env` 의 `SEED_ADMIN_PASSWORD`, `SEED_DOCTOR_PASSWORD` 로 바꿀 수 있다.)
+계정: `admin`, `doctor01~03`. **비밀번호는 `init_db --seed` 가 난수로 발급해
+화면에 한 번만 출력한다** — 그때 받아 적을 것. 자세한 내용은 아래 배포 §7 참고.
+로컬 개발에서만 `SEED_ADMIN_PASSWORD` / `SEED_DOCTOR_PASSWORD` 로 고정할 수 있다.
 
 ## 테스트
 
@@ -301,11 +302,12 @@ EXTERNAL_API_BASE_URL=https://admin-dev.aimie-m.com
 EXTERNAL_API_LOGIN_ID=<계정>
 EXTERNAL_API_PASSWORD=<비밀번호>
 
-# 초기 계정 비밀번호 — 데모값을 그대로 두면 §8 점검이 배포를 막는다
-SEED_ADMIN_PASSWORD=<바꿀 것>
-SEED_DOCTOR_PASSWORD=<바꿀 것>
+# 전문의 계정 수
 SEED_DOCTOR_COUNT=3
 ```
+
+> **계정 비밀번호는 `.env` 에 넣지 않는다.** 서버 파일에 평문으로 남기 때문이다.
+> §7 에서 난수로 발급받아 화면에서 한 번만 받아 적는다.
 
 읽기 전용 DB 2개는 **SELECT 권한만 있는 계정**을 따로 발급받는 편이 안전하다.
 앱이 커넥션을 `read_only` 로 열지만, 계정 권한으로 한 겹 더 막는 것이 낫다.
@@ -345,7 +347,39 @@ uv run python -m scripts.init_db --seed
 | `003_rename_kidscreen_to_phq_stress.sql` | 저장된 척도명 개명 |
 
 `--seed` 는 관리자 1명 + 전문의 `SEED_DOCTOR_COUNT` 명을 만든다.
-**이미 있는 계정은 건드리지 않는다** (덮어쓰려면 `--force`).
+**이미 있는 계정은 건드리지 않는다** (재설정하려면 `--force`).
+
+#### 비밀번호는 어디에 두나 — **어디에도 두지 않는다**
+
+코드에 넣으면 git 에 영구히 남아 저장소 접근자 전원이 보게 되고, `.env` 에 두면
+서버 파일에 평문으로 남는다. 그래서 **생성 시점에 난수로 발급하고 화면에 한 번만
+출력한다.** 그때 받아 적어 비밀번호 관리자에 보관한다.
+
+```
+================================================================
+  발급된 비밀번호 — 지금 받아 적으세요. 다시 볼 수 없습니다.
+================================================================
+  관리자   Sf69ZszBRjMzJ5pp8nea
+  전문의   kR7vQm2XbnT4wLpZ9dCe
+================================================================
+  분실하면 --seed --force 로 재발급해야 합니다.
+```
+
+| 상황 | 방법 |
+| --- | --- |
+| **서버 (권장)** | `--seed` → 난수 20자 발급, 1회 출력 |
+| 직접 정하고 싶을 때 | `--seed --prompt` → 터미널 입력 (화면에 안 찍힘, 8자 이상) |
+| 분실·유출 시 | `--seed --force` → 재발급 |
+| 로컬 개발 | `SEED_ADMIN_PASSWORD` / `SEED_DOCTOR_PASSWORD` 환경변수 |
+
+환경변수는 **로컬 편의용**이다. 서버에서는 설정하지 않는 것을 권한다.
+설정하면 난수 발급 대신 그 값이 쓰인다.
+
+§8 의 점검이 **저장된 해시에 직접 대입해** 약한 비밀번호가 남아 있는지 확인하므로,
+데모 계정을 그대로 둔 채로는 배포가 통과되지 않는다.
+
+> 전문의 계정은 전원 같은 비밀번호를 받는다. 계정별로 다르게 주거나 본인이 바꾸게
+> 하려면 계정 관리 화면이 필요하다 — 현재 미구현이다.
 
 ### 8. 배포 전 점검 — 여기서 막히면 앱을 띄우지 말 것
 
@@ -359,7 +393,7 @@ uv run python -m scripts.preflight
 | --- | --- | --- |
 | 1 | 접속 문자열이 코드 기본값(localhost)인지 | ⚠️ §5 를 안 한 것 |
 | 1 | API 호스트 HTTPS · 인증 수단 유무 | ❌ 인증 없으면 전부 401 |
-| 1 | 시드 비밀번호가 데모값인지 | ❌ 배포 불가 |
+| 2 | **저장된 계정에 약한 비밀번호가 남아 있는지** (해시에 직접 대입) | ❌ `--seed --force` 로 재발급 |
 | 2 | 평가 DB 접속 + 테이블 3개 | ❌ §6 / §7 을 안 한 것 |
 | 3 | 명부·세션 DB 접속 + 쓰기가 실제로 거부되는지 | ❌ 주소·계정 확인 |
 | 4 | 명부 학생 중 척도검사가 있는 비율 | ❌ 0명이면 두 DB 가 다른 환경 |
@@ -382,7 +416,7 @@ uv run pytest               # DB 포함 전체
 ```bash
 # 확인용
 uv run streamlit run Test_validation_doctor.py \
-  --server.port 8501 --server.address 0.0.0.0 --server.headless true
+  --server.port 8002 --server.address 0.0.0.0 --server.headless true
 ```
 
 **systemd 등록** (`/etc/systemd/system/validation-doctor.service`):
@@ -397,7 +431,7 @@ Type=simple
 User=<실행계정>
 WorkingDirectory=/path/to/Test_validation_doctor
 ExecStart=/home/<실행계정>/.local/bin/uv run streamlit run Test_validation_doctor.py \
-  --server.port 8501 --server.address 0.0.0.0 --server.headless true
+  --server.port 8002 --server.address 0.0.0.0 --server.headless true
 Restart=always
 RestartSec=5
 
@@ -428,7 +462,7 @@ server {
     ssl_certificate_key /etc/letsencrypt/live/<도메인>/privkey.pem;
 
     location / {
-        proxy_pass http://127.0.0.1:8501;
+        proxy_pass http://127.0.0.1:8002;
         proxy_http_version 1.1;
         proxy_set_header Upgrade    $http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -451,7 +485,7 @@ Streamlit ─┬─→ 평가 DB        (읽기/쓰기)
            └─→ 대화 API (HTTPS) (읽기 전용)
 ```
 
-외부 노출은 nginx(443)만 열고, **8501 은 외부에서 막는다.**
+외부 노출은 nginx(443)만 열고, **8002 는 외부에서 막는다.**
 
 ### 12. 동작 확인
 
