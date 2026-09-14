@@ -190,7 +190,9 @@ DB 테스트는 실제 `validation_db` 에 붙어 트랜잭션 롤백으로 격�
 | --- | --- | --- |
 | `stress` | 1단계 PHQ-stress | felt_sad, felt_lonely, got_on_well_at_school … |
 | `depression` | 3단계 PHQ-A | PHQ-9 문항 9개 |
-| `opening` `finish` `continue` | (판별 안 함) | 척도가 아니라 진행 상태 |
+| `early_depression` | 2단계 PHQ-2 | 선별 문항 |
+| `opening` `finish` `continue` | (판별 안 함) | 척도가 아니라 대화 진행 상태 |
+| `severe` | (판별 안 함) | 척도가 아니라 위험 신호 분기 |
 
 점수 선택지는 척도마다 다르다.
 
@@ -203,78 +205,138 @@ DB 테스트는 실제 `validation_db` 에 붙어 트랜잭션 롤백으로 격�
 척도마다 선택지 **개수**가 다를 수 있다 (PHQ-stress 3개, 나머지 5개).
 
 ---
-## stg 배포
+## 서버 배포 (dev / stg)
+
+아래 순서를 위에서부터 그대로 따르면 된다. dev 와 stg 는 **절차가 같고 주소만 다르다**.
 
 ### 자동으로 되나? — **아니다**
 
 코드만 올리고 DB 주소만 바꿔서는 뜨지 않는다. 이유는 세 가지다.
 
-1. **평가 DB 가 stg 에 없다.** `validation_db` 는 이 시스템 전용 신규 DB 라
+1. **평가 DB 가 서버에 없다.** `validation_db` 는 이 시스템 전용 신규 DB 라
    누군가 만들어 주기 전에는 존재하지 않는다. 주소만 바꾸면 "없는 DB" 를 가리킨다.
 2. **접속 문자열 기본값이 전부 `localhost` 다.** 환경변수를 빠뜨려도 앱은
-   에러 없이 뜨고, 조용히 `localhost:15432` 로 붙으러 간다 (§배포 함정 참고).
+   에러 없이 뜨고, 조용히 `localhost:15432` 로 붙으러 간다.
 3. **읽기 소스가 2개 더 있다.** 학생 명부 DB, 척도검사 세션 DB 도 각각
-   stg 주소로 바꿔야 한다. 대화 API 주소·계정까지 합치면 바꿀 곳이 5군데다.
+   서버 주소로 바꿔야 한다. 대화 API 주소·계정까지 합치면 바꿀 곳이 5군데다.
 
 ---
 
-### 1. 바꿔야 하는 환경변수
+### 0. 미리 준비할 것
 
-`.env` 는 커밋되지 않으므로 배포 서버에서 직접 만든다 (`cp .env.example .env`,
-권한은 `chmod 600`).
+| 필요한 것 | 확인 방법 |
+| --- | --- |
+| 배포 서버 SSH 접속 | |
+| PostgreSQL 접속 정보 — **`CREATE DATABASE` 권한 필요** | 평가 DB 를 새로 만들어야 한다 |
+| 학생 명부 DB 주소 + **SELECT 전용 계정** | `t_user`, `t_student` 가 있는 DB |
+| 척도검사 DB 주소 + **SELECT 전용 계정** | `sessions`, `checkpoints` 가 있는 DB |
+| 외부 API 호스트 + 로그인 계정 | dev 는 `https://admin-dev.aimie-m.com` |
+| 서버에서 GitHub 접근 수단 | SSH 키 또는 Personal Access Token |
 
-**반드시 바꿔야 하는 것 — 안 바꾸면 조용히 localhost 로 붙는다**
+> **명부 DB 와 세션 DB 는 반드시 같은 환경 것이어야 한다.** dev 명부 + stg 세션처럼
+> 섞이면 학생은 보이는데 척도검사가 0건이 되어 할당을 만들 수 없다. §8 의 점검이 잡아낸다.
 
-| 변수 | 무엇 | 기본값(위험) |
-| --- | --- | --- |
-| `VALIDATION_DATABASE_URL` | 평가 DB (읽기/쓰기) | `localhost:15432/validation_db` |
-| `STUDENT_SOURCE_DATABASE_URL` | 학생 명부 (읽기 전용) | `localhost:15432/aimie_kids_dev_app` |
-| `SESSION_SOURCE_DATABASE_URL` | 척도검사 목록 (읽기 전용) | `localhost:15432/aimie_kids_dev_ai` |
-| `EXTERNAL_API_BASE_URL` | 대화 API 호스트 | `https://admin-dev.aimie-m.com` |
-| `EXTERNAL_API_LOGIN_ID` / `_PASSWORD` | API 계정 | 없음 (비면 401) |
-| `SEED_ADMIN_PASSWORD` / `SEED_DOCTOR_PASSWORD` | 초기 계정 비밀번호 | `admin1234` / `doctor1234` ← **그대로 두면 안 된다** |
+---
+
+### 1. 코드 받기
+
+```bash
+# SSH 키가 등록돼 있으면
+git clone git@github.com:OC-JSPark/Test_validation_doctor.git
+# 아니면 HTTPS (토큰 입력)
+git clone https://github.com/OC-JSPark/Test_validation_doctor.git
+
+cd Test_validation_doctor
+git checkout feat/app-doctor-evaluation   # ⚠️ 아직 main 에 머지되지 않았다
+```
+
+머지 후에는 `main` 을 쓰면 된다. 현재 어느 브랜치인지 `git branch --show-current` 로 확인할 것.
+
+### 2. Python · uv 설치
+
+Python **3.11 이상**이 필요하다.
+
+```bash
+python3 --version            # 3.11 미만이면 먼저 올릴 것
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source $HOME/.local/bin/env  # 또는 셸 재접속
+uv --version
+```
+
+### 3. 의존성 설치
+
+```bash
+uv sync --frozen             # uv.lock 그대로 재현 (버전이 흔들리지 않는다)
+```
+
+`--frozen` 을 쓰는 이유: lock 파일을 무시하고 최신 버전을 끌어오면 로컬에서
+통과한 테스트가 서버에서 깨질 수 있다.
+
+### 4. `.env` 만들기
+
+`.env` 는 **커밋되지 않으므로 서버에서 직접 만든다.**
+
+```bash
+cp .env.example .env
+chmod 600 .env               # 비밀번호가 들어가므로 권한을 좁힌다
+vi .env
+```
+
+### 5. DB 주소·계정 채우기 — 가장 중요한 단계
+
+**반드시 바꿀 것.** 안 바꾸면 경고 없이 `localhost` 로 붙으러 간다.
+
+```bash
+# 평가 DB (읽기/쓰기) — 이 시스템이 만드는 데이터가 들어간다
+VALIDATION_DATABASE_URL=postgresql://<user>:<pw>@<dev-db-host>:5432/validation_db
+
+# 학생 명부 (읽기 전용) — t_user, t_student
+STUDENT_SOURCE_DATABASE_URL=postgresql://<ro-user>:<pw>@<dev-db-host>:5432/aimie_kids_dev_app
+
+# 척도검사 목록 (읽기 전용) — sessions, checkpoints
+SESSION_SOURCE_DATABASE_URL=postgresql://<ro-user>:<pw>@<dev-db-host>:5432/aimie_kids_dev_ai
+
+# 대화 API
+EXTERNAL_API_BASE_URL=https://admin-dev.aimie-m.com
+EXTERNAL_API_LOGIN_ID=<계정>
+EXTERNAL_API_PASSWORD=<비밀번호>
+
+# 초기 계정 비밀번호 — 데모값을 그대로 두면 §8 점검이 배포를 막는다
+SEED_ADMIN_PASSWORD=<바꿀 것>
+SEED_DOCTOR_PASSWORD=<바꿀 것>
+SEED_DOCTOR_COUNT=3
+```
 
 읽기 전용 DB 2개는 **SELECT 권한만 있는 계정**을 따로 발급받는 편이 안전하다.
 앱이 커넥션을 `read_only` 로 열지만, 계정 권한으로 한 겹 더 막는 것이 낫다.
 
-**환경이 다르면 바꾸는 것**
+**환경이 다르면 추가로 바꾸는 것**
 
 | 변수 | 언제 |
 | --- | --- |
-| `EXTERNAL_API_LOGIN_PATH` / `_CHAT_PATH` | 게이트웨이 프리픽스가 dev 와 다를 때 |
+| `EXTERNAL_API_LOGIN_PATH` / `_CHAT_PATH` | 게이트웨이 프리픽스가 다를 때 |
 | `EXTERNAL_API_LOGIN_TYPE` | 로그인 타입이 `TEACHER` 가 아닐 때 |
 | `EXTERNAL_API_TIMEOUT` | 기본 10초로 부족할 때 |
 | `SCALE_STAGE_OPTIONS` / `DOCTOR_SCORE_OPTIONS` | 척도명·점수 라벨을 바꿀 때 |
-| `SEED_DOCTOR_COUNT` | 전문의 계정을 3명보다 많이 만들 때 |
 
-**코드를 고쳐야 하는 것** (환경변수로 못 바꾼다)
+### 6. 평가 DB 생성 (최초 1회)
 
-| 대상 | 파일 | 언제 |
-| --- | --- | --- |
-| `stage` → 척도 매핑 | `app/config.py` `DEFAULT_STAGE_TO_SCALE` | stg 대화 엔진의 `stage` 값이 dev 와 다를 때 |
-| 척도별 점수 선택지 | `app/config.py` `SCALE_SCORE_OPTIONS` | 척도를 추가할 때 |
-| 명부/세션 조회 쿼리 | `app/student_directory.py` / `app/session_directory.py` 의 `_LIST_SQL` | stg 스키마가 다를 때 |
-
----
-
-### 2. 배포 절차
+앱이 만들어 주지 않는다. **직접 만들어야 한다.**
 
 ```bash
-# 1) 런타임 — uv.lock 그대로 재현
-uv sync --frozen
+psql -h <dev-db-host> -U <admin> -c "CREATE DATABASE validation_db"
+```
 
-# 2) 평가 DB 생성 (최초 1회). 앱이 만들어 주지 않는다.
-psql -h <stg-db-host> -U <admin> -c "CREATE DATABASE validation_db"
+이미 있으면 `already exists` 가 나고, 그냥 넘어가면 된다.
 
-# 3) 환경변수
-cp .env.example .env && chmod 600 .env   # 위 표대로 채운다
+### 7. 스키마 + 초기 계정
 
-# 4) 스키마 + 계정 — 멱등이라 배포할 때마다 그냥 다시 돌린다
+```bash
 uv run python -m scripts.init_db --seed
 ```
 
-`scripts/init_db.py` 는 `sql/*.sql` 을 파일명 순서대로 실행한다.
-현재 3개이고 전부 멱등이라, 재실행해도 안전하고 **스키마 변경분이 자동 반영된다.**
+`sql/*.sql` 을 파일명 순서대로 실행한다. **전부 멱등이라 재배포할 때마다 그냥 다시
+돌리면 되고, 스키마 변경분이 자동 반영된다.**
 
 | 파일 | 내용 |
 | --- | --- |
@@ -282,40 +344,27 @@ uv run python -m scripts.init_db --seed
 | `002_add_assignment_scale_stage.sql` | 할당에 척도 컬럼 추가 |
 | `003_rename_kidscreen_to_phq_stress.sql` | 저장된 척도명 개명 |
 
----
+`--seed` 는 관리자 1명 + 전문의 `SEED_DOCTOR_COUNT` 명을 만든다.
+**이미 있는 계정은 건드리지 않는다** (덮어쓰려면 `--force`).
 
-### 3. 배포 전 점검 — `preflight`
-
-아래 §5 의 함정들을 한 번에 확인한다. **치명적 문제가 있으면 종료 코드 1** 을
-내므로 배포 파이프라인에서 게이트로 걸 수 있다.
+### 8. 배포 전 점검 — 여기서 막히면 앱을 띄우지 말 것
 
 ```bash
-uv run python -m scripts.preflight                       # 전체
-uv run python -m scripts.preflight --student <studentId> # 대화 조회까지
-uv run python -m scripts.preflight --no-api              # 외부 API 없이
+uv run python -m scripts.preflight
 ```
 
-검사 항목:
+치명적 문제가 있으면 **종료 코드 1** 을 낸다. 배포 파이프라인에서 게이트로 쓸 수 있다.
 
 | # | 검사 | 실패하면 |
 | --- | --- | --- |
-| 1 | 접속 문자열이 코드 기본값(localhost)인지 | ⚠️ 경고 — stg 라면 환경변수 누락 |
-| 1 | API 호스트가 HTTPS 인지, 인증 수단이 있는지 | ❌ 인증 없으면 전부 401 |
-| 1 | 시드 비밀번호가 데모값 그대로인지 | ❌ 배포 불가 |
-| 2 | 평가 DB 접속 + 테이블 3개 존재 | ❌ `CREATE DATABASE` / `init_db` 필요 |
-| 3 | 명부·세션 DB 접속 + **쓰기가 실제로 거부되는지** | ❌ 연결 실패 / ⚠️ 쓰기가 열려 있음 |
+| 1 | 접속 문자열이 코드 기본값(localhost)인지 | ⚠️ §5 를 안 한 것 |
+| 1 | API 호스트 HTTPS · 인증 수단 유무 | ❌ 인증 없으면 전부 401 |
+| 1 | 시드 비밀번호가 데모값인지 | ❌ 배포 불가 |
+| 2 | 평가 DB 접속 + 테이블 3개 | ❌ §6 / §7 을 안 한 것 |
+| 3 | 명부·세션 DB 접속 + 쓰기가 실제로 거부되는지 | ❌ 주소·계정 확인 |
 | 4 | 명부 학생 중 척도검사가 있는 비율 | ❌ 0명이면 두 DB 가 다른 환경 |
-| 4 | 세션의 실제 `stage` 값이 척도 매핑에 있는지 | ⚠️ 미매핑 stage 를 이름과 건수로 알려줌 |
-| 5 | API 로그인 + 대화 조회 + AI질문 유무 | ❌ 호스트·경로·계정 문제 |
-
-출력 예 (로컬 기준):
-
-```
-[4. 데이터 정합성]
-  ✅ 명부·세션 정합성   명부 2명 중 2명에게 척도검사가 있다
-  ⚠️  stage 매핑      매핑되지 않은 stage: severe(9건) — 이 세션들은 척도가 비어
-                     전문의가 직접 골라야 한다.
-```
+| 4 | 실제 `stage` 값이 척도 매핑에 있는지 | ⚠️ 미매핑 stage 를 이름·건수로 |
+| 5 | API 로그인 + 대화 조회 | ❌ 호스트·경로·계정 문제 |
 
 접속 문자열의 비밀번호는 가려서 출력하므로 로그에 남아도 안전하다.
 
@@ -326,66 +375,125 @@ uv run pytest -m "not db"   # 순수 로직 (DB 불필요)
 uv run pytest               # DB 포함 전체
 ```
 
-마지막으로 **관리자 화면에서 학생 목록이 뜨는지** 눈으로 확인한다. 목록이 비면
-명부 DB 연결이나 `user_type='STUDENT'` 필터를 의심한다.
+### 9. 앱 실행
 
----
-
-### 4. 상시 구동
-
-`streamlit run` 은 포그라운드 프로세스다. systemd 나 컨테이너로 감싼다.
+`streamlit run` 은 포그라운드 프로세스다. 먼저 손으로 띄워 확인한 뒤 서비스로 등록한다.
 
 ```bash
+# 확인용
 uv run streamlit run Test_validation_doctor.py \
   --server.port 8501 --server.address 0.0.0.0 --server.headless true
 ```
 
-앞단에 nginx 를 두고 **HTTPS 로 종단**한다 — 로그인 비밀번호가 평문으로 오가면 안 된다.
-WebSocket 을 쓰므로 `Upgrade` / `Connection` 헤더가 필요하다.
+**systemd 등록** (`/etc/systemd/system/validation-doctor.service`):
+
+```ini
+[Unit]
+Description=AIMIE Kids 전문의 평가 시스템
+After=network.target
+
+[Service]
+Type=simple
+User=<실행계정>
+WorkingDirectory=/path/to/Test_validation_doctor
+ExecStart=/home/<실행계정>/.local/bin/uv run streamlit run Test_validation_doctor.py \
+  --server.port 8501 --server.address 0.0.0.0 --server.headless true
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now validation-doctor
+sudo systemctl status validation-doctor
+journalctl -u validation-doctor -f     # 로그
+```
+
+`.env` 는 앱이 작업 디렉토리에서 읽으므로 `WorkingDirectory` 를 정확히 줄 것.
+
+### 10. nginx + HTTPS
+
+로그인 비밀번호가 평문으로 오가면 안 되므로 **HTTPS 로 종단**한다.
+Streamlit 은 WebSocket 을 쓰므로 `Upgrade` / `Connection` 헤더가 필요하다.
 
 ```nginx
-location / {
-    proxy_pass http://127.0.0.1:8501;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade    $http_upgrade;
-    proxy_set_header Connection "upgrade";
-    proxy_set_header Host       $host;
+server {
+    listen 443 ssl;
+    server_name <도메인>;
+
+    ssl_certificate     /etc/letsencrypt/live/<도메인>/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/<도메인>/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:8501;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host       $host;
+        proxy_read_timeout 86400;
+    }
 }
 ```
 
-서브경로(`/validation/`)로 붙일 경우 `--server.baseUrlPath validation` 을 함께 준다.
+서브경로(`/validation/`)로 붙일 경우 실행 명령에 `--server.baseUrlPath validation` 을 추가한다.
 
-앱이 붙는 곳이 4군데다. 방화벽·보안그룹에서 전부 열려 있어야 한다.
+### 11. 방화벽
+
+앱이 붙는 곳이 4군데다. 전부 열려 있어야 한다.
 
 ```
-Streamlit ─┬─→ validation_db   (읽기/쓰기)
-           ├─→ 학생 명부 DB      (읽기 전용)
-           ├─→ 세션 DB          (읽기 전용)
-           └─→ 대화 API (HTTPS)  (읽기 전용)
+Streamlit ─┬─→ 평가 DB        (읽기/쓰기)
+           ├─→ 학생 명부 DB    (읽기 전용)
+           ├─→ 세션 DB        (읽기 전용)
+           └─→ 대화 API (HTTPS) (읽기 전용)
 ```
+
+외부 노출은 nginx(443)만 열고, **8501 은 외부에서 막는다.**
+
+### 12. 동작 확인
+
+1. 브라우저로 접속 → 로그인 화면이 뜨는지
+2. `admin` 으로 로그인 → **학생 목록이 뜨는지** (비면 명부 DB 또는 `user_type='STUDENT'` 필터 확인)
+3. 학생을 체크 → **척도검사 건수가 나오는지** (0이면 세션 DB 가 다른 환경)
+4. 작업 생성 → 전문의로 로그인 → **대화가 불러와지는지** (실패하면 API 주소·계정)
+5. 점수·소견 입력 → 이동 후 되돌아왔을 때 값이 남아 있는지
 
 ---
 
-### 5. 배포 함정 — 겪어 본 것들
+### 재배포 (코드 업데이트)
 
-전부 **조용히** 실패했던 것들이다. 그래서 §3 의 `preflight` 가 하나씩 잡아낸다.
+```bash
+cd /path/to/Test_validation_doctor
+git pull
+uv sync --frozen                     # 의존성 변경 반영
+uv run python -m scripts.init_db     # 스키마 변경 반영 (멱등, --seed 없이)
+uv run python -m scripts.preflight   # 점검
+sudo systemctl restart validation-doctor
+```
 
-| 함정 | 왜 안 보이나 | 잡는 방법 |
+`.env` 는 건드리지 않는다 (커밋 대상이 아니라 `git pull` 로 덮이지 않는다).
+
+---
+
+### 막혔을 때
+
+| 증상 | 원인 | 확인 |
 | --- | --- | --- |
-| **환경변수 누락** | 기본값이 localhost 라 앱이 에러 없이 뜬다 | `preflight` 가 기본값 사용을 경고 |
-| **명부·세션 DB 환경 불일치** | 학생은 보이는데 척도검사만 0건 | 교집합 0명이면 ❌ 실패 처리 |
-| **호스트 이름 오류** | `dev.aimie-m.com` 은 nginx 테스트 페이지라 전 경로 404. 실제는 `admin-dev` | API 로그인 검사 + 404 에 경로 확인 힌트 |
-| **`stage` 값이 환경마다 다름** | dev 에서 `early_depression` 을 찾기 전까지 2단계가 영영 비었다 | 미매핑 stage 를 이름·건수로 출력 |
-| **시드 비밀번호 방치** | 동작에는 문제가 없다 | 데모값이면 ❌ 실패 처리 |
-| **토큰 만료** | 캐시된 토큰으로 계속 401 | 401 이면 1회 재로그인 후 재시도 (구현됨) |
-| **AI 질문 누락** | 빈 칸이라 데이터 문제인지 버그인지 모른다 | 전문의 화면에 사유를 표시 (구현됨) |
-
-`preflight` 가 잡지 **못하는** 것도 있다. 미매핑 `stage` 를 어느 척도에 붙일지,
-읽기 전용 계정을 따로 발급할지 같은 판단은 사람이 해야 한다.
+| 로그인 화면에서 DB 연결 오류 | 평가 DB 없음/주소 오류 | §6, §8 |
+| 학생 목록이 비어 있음 | 명부 DB 주소·계정, `user_type` 필터 | `preflight` §3 |
+| 학생은 보이는데 척도검사 0건 | 명부·세션 DB 가 다른 환경 | `preflight` §4 — ❌ 로 잡힘 |
+| 대화 조회가 404 | API 호스트·경로 오류 | `dev.aimie-m.com` 은 nginx 테스트 페이지다. `admin-dev` 를 쓸 것 |
+| 대화 조회가 401 | 토큰 만료 / 계정 오류 | 401 이면 1회 재로그인 후 재시도한다. 계정이 비었으면 그대로 실패 |
+| 척도가 비어 있음 | 서버의 `stage` 값이 다름 | `preflight` §4 가 미매핑 stage 를 알려준다 |
+| AI 질문만 비어 있음 | API 가 그 세션의 teacher 메시지를 누락 | 앱이 화면에 사유를 표시한다 |
+| 페이지가 계속 로딩 중 | nginx 에 WebSocket 헤더 누락 | §10 |
 
 ---
 
-### 6. 배포 전 판단이 필요한 것
+### 배포 전 판단이 필요한 것
 
 기능이 아직 없어서, 운영 정책으로 메워야 하는 부분이다.
 
