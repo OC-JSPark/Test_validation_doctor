@@ -134,8 +134,10 @@ def check_stage_coverage(
     stage 이름은 환경마다 다를 수 있다. dev 에서 `early_depression` 을
     발견하기 전까지 2단계가 영영 판별되지 않았다.
     """
-    # 척도가 아닌 진행 상태는 매핑하지 않는 것이 정상이다.
-    not_a_scale = {"opening", "continue", "finish", ""}
+    # 척도가 아닌 stage 는 매핑하지 않는 것이 정상이다.
+    #   opening / continue / finish — 대화 진행 상태
+    #   severe                      — 척도가 아니라 위험 신호 분기 (평가 대상 아님)
+    not_a_scale = {"opening", "continue", "finish", "severe", ""}
     unmapped = {
         stage: n
         for stage, n in stage_counts.items()

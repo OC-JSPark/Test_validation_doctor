@@ -64,9 +64,9 @@ SCALE_SCORE_OPTIONS: dict[str, tuple[str, ...]] = {
 #   early_depression  → 선별 단계 (PHQ-2)
 #   depression        → PHQ 우울 문항 9개
 #
-# 척도가 아닌 진행 상태(opening / continue / finish)는 매핑하지 않는다 — 판별 안 함.
-# `severe`(신체증상: back_pain, dizziness, chest_pain …) 는 위 3단계에 속하지 않아
-# 아직 매핑하지 않았다. 별도 척도로 다룰지 확정되면 여기에 추가한다.
+# 척도는 이 3단계가 전부다. 아래 stage 는 척도가 아니라 매핑하지 않는다.
+#   opening / continue / finish — 대화 진행 상태
+#   severe                      — 위험 신호 분기 (평가 대상 아님)
 DEFAULT_STAGE_TO_SCALE: dict[str, str] = {
     "stress": "1단계 PHQ-stress",
     "early_depression": "2단계 PHQ-2",

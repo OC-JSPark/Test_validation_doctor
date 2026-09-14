@@ -119,12 +119,21 @@ def test_매핑되지_않은_stage_를_경고한다():
     assert "정체불명단계" in result.detail
 
 
-def test_진행상태는_매핑_대상이_아니다():
-    """opening·finish·continue 는 척도가 아니라 경고 대상이 아니다."""
+def test_척도가_아닌_stage_는_경고하지_않는다():
+    """진행 상태(opening·finish·continue)와 위험 신호 분기(severe)는 척도가 아니다."""
     result = check_stage_coverage(
-        {"stress": 10, "opening": 5, "finish": 2, "continue": 1}, get_settings()
+        {"stress": 10, "opening": 5, "finish": 2, "continue": 1, "severe": 9},
+        get_settings(),
     )
     assert result.status == "ok"
+
+
+def test_척도는_3단계가_전부다():
+    settings = get_settings()
+    assert settings.scale_for_stage("stress") == "1단계 PHQ-stress"
+    assert settings.scale_for_stage("early_depression") == "2단계 PHQ-2"
+    assert settings.scale_for_stage("depression") == "3단계 PHQ-A"
+    assert settings.scale_for_stage("severe") is None  # 척도 아님
 
 
 def test_stage_가_하나도_없으면_경고():
