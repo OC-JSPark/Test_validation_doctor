@@ -15,7 +15,6 @@ from app.preflight import (
     check_api_settings,
     check_defaults,
     check_roster_session_match,
-    check_seed_passwords,
     check_stage_coverage,
     mask_dsn,
     summarize,
@@ -96,18 +95,6 @@ def test_HTTPS_가_아니면_경고한다():
     assert next(r for r in results if r.name == "API 호스트").status == "warn"
 
 
-# --- 시드 비밀번호 ----------------------------------------------------------
-
-
-def test_데모_비밀번호가_남아있으면_치명적():
-    assert check_seed_passwords("admin1234", "doctor1234").status == "fail"
-    assert check_seed_passwords("admin1234", "바꿈").status == "fail"
-
-
-def test_둘_다_바꾸면_통과():
-    assert check_seed_passwords("s3cret!", "an0ther!").status == "ok"
-
-
 # --- stage 매핑 커버리지 ----------------------------------------------------
 
 
@@ -159,13 +146,74 @@ def test_일부라도_겹치면_통과():
     assert check_roster_session_match(9, 4).status == "ok"
 
 
+# --- 비밀번호 발급 (scripts/init_db) ----------------------------------------
+
+
+def test_난수_비밀번호는_매번_다르고_충분히_길다():
+    from scripts.init_db import generate_password
+
+    passwords = {generate_password() for _ in range(50)}
+    assert len(passwords) == 50
+    assert all(len(p) >= 20 for p in passwords)
+
+
+def test_헷갈리는_글자는_쓰지_않는다():
+    """받아 적을 때 0/O, 1/l/I 를 혼동하지 않도록."""
+    from scripts.init_db import generate_password
+
+    combined = "".join(generate_password() for _ in range(50))
+    for ch in "0O1lI":
+        assert ch not in combined
+
+
+def test_환경변수가_있으면_그_값을_쓴다(monkeypatch):
+    from scripts.init_db import resolve_password
+
+    monkeypatch.setenv("TEST_SEED_PW", "from-env-value")
+    password, source = resolve_password("관리자", "TEST_SEED_PW", prompt=False)
+
+    assert password == "from-env-value"
+    assert source == "env"
+
+
+def test_환경변수가_없으면_난수로_발급한다(monkeypatch):
+    """서버 기본 동작. 비밀번호가 설정 파일에 남지 않는다."""
+    from scripts.init_db import resolve_password
+
+    monkeypatch.delenv("TEST_SEED_PW", raising=False)
+    password, source = resolve_password("관리자", "TEST_SEED_PW", prompt=False)
+
+    assert source == "generated"
+    assert len(password) >= 20
+
+
+# --- DB 의 약한 비밀번호 감지 ------------------------------------------------
+
+
+@pytest.mark.db
+def test_약한_비밀번호를_쓰는_계정을_찾아낸다(conn):
+    """환경변수가 아니라 저장된 해시에 직접 대입해 확인한다."""
+    from app.preflight import _WEAK_PASSWORDS
+    from app.repositories import users as users_repo
+    from app.security import verify_password
+
+    users_repo.upsert_user(conn, "weak_acct", "약한 계정", "DOCTOR", "admin1234")
+    users_repo.upsert_user(conn, "strong_acct", "강한 계정", "DOCTOR", "Sf69ZszBRjMzJ5pp")
+
+    weak_hash = users_repo.get_password_hash(conn, "weak_acct")
+    strong_hash = users_repo.get_password_hash(conn, "strong_acct")
+
+    assert any(verify_password(pw, weak_hash) for pw in _WEAK_PASSWORDS)
+    assert not any(verify_password(pw, strong_hash) for pw in _WEAK_PASSWORDS)
+
+
 # --- 집계 ------------------------------------------------------------------
 
 
 def test_상태별_개수를_센다():
     results = [
-        check_seed_passwords("a", "b"),          # ok
-        check_seed_passwords("admin1234", "b"),  # fail
-        check_stage_coverage({}, get_settings()),  # warn
+        check_roster_session_match(9, 4),           # ok
+        check_roster_session_match(2, 0),           # fail
+        check_stage_coverage({}, get_settings()),   # warn
     ]
     assert summarize(results) == (1, 1, 1)

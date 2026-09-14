@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS doctor_evaluations (
     assignment_id   INT REFERENCES evaluation_assignments(id) ON DELETE CASCADE,
     evaluation_code VARCHAR(50),  -- 평가 ID (예: KID-001-00)
     turn_index      INT NOT NULL, -- 질문/답변 순서 (0, 1, 2...)
-    scale_stage     VARCHAR(100), -- 진단 단계 (예: 1단계 KIDSCREEN-10)
+    scale_stage     VARCHAR(100), -- 진단 단계 (예: 1단계 PHQ-stress)
     ai_question     TEXT,         -- 외부 API 에서 가져온 AI 질문
     user_answer     TEXT,         -- 외부 API 에서 가져온 학생 답변
     doctor_score    VARCHAR(50),  -- 전문의 점수/조치 (예: Very (4점))
