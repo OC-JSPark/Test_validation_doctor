@@ -1,0 +1,26 @@
+[project]
+name = "validation-doctor"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "psycopg-pool>=3.3.1",
+    "psycopg[binary]>=3.3.5",
+    "python-dotenv>=1.2.3",
+    "requests>=2.34.2",
+    "streamlit>=1.63.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+    "responses>=0.26.3",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
+markers = [
+    "db: 실제 Docker PostgreSQL(validation_db) 이 필요한 테스트",
+]
