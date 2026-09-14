@@ -26,11 +26,18 @@ from app.config import (
     DEFAULT_STUDENT_DB_URL,
     Settings,
 )
+from app.security import verify_password
 
 Status = Literal["ok", "warn", "fail"]
 
-# 배포 시 반드시 바꿔야 하는 시드 비밀번호 (scripts/init_db.py 의 기본값)
-_DEMO_PASSWORDS = {"admin1234", "doctor1234"}
+# 서버에 남아 있으면 안 되는 비밀번호. 과거 데모 기본값과 흔한 약한 값들.
+_WEAK_PASSWORDS = (
+    "admin1234",
+    "doctor1234",
+    "password",
+    "12345678",
+    "admin",
+)
 
 _REQUIRED_TABLES = {"users", "evaluation_assignments", "doctor_evaluations"}
 
@@ -114,16 +121,37 @@ def check_api_settings(settings: Settings) -> list[CheckResult]:
     return results
 
 
-def check_seed_passwords(admin_pw: str, doctor_pw: str) -> CheckResult:
-    """데모 비밀번호가 그대로인지."""
-    leftover = _DEMO_PASSWORDS & {admin_pw, doctor_pw}
-    if leftover:
+def check_weak_passwords(settings: Settings) -> CheckResult:
+    """약한 비밀번호를 쓰는 계정이 실제로 DB 에 있는지.
+
+    환경변수를 보지 않고 **저장된 해시에 직접 대입해** 확인한다.
+    운영에서는 비밀번호를 환경변수에 두지 않으므로, 설정이 아니라
+    DB 의 현재 상태를 봐야 의미가 있다.
+    """
+    try:
+        with psycopg.connect(settings.database_url, row_factory=dict_row) as conn:
+            rows = conn.execute("SELECT user_id, password_hash FROM users").fetchall()
+    except psycopg.Error as exc:
+        return CheckResult("계정 비밀번호", "warn", f"확인하지 못했다: {exc}")
+
+    if not rows:
         return CheckResult(
-            "시드 비밀번호",
-            "fail",
-            "데모 비밀번호가 그대로다. SEED_ADMIN_PASSWORD / SEED_DOCTOR_PASSWORD 를 바꿀 것.",
+            "계정 비밀번호", "warn", "계정이 하나도 없다. init_db --seed 를 실행할 것."
         )
-    return CheckResult("시드 비밀번호", "ok", "기본값에서 변경됨")
+
+    weak = [
+        r["user_id"]
+        for r in rows
+        if any(verify_password(pw, r["password_hash"]) for pw in _WEAK_PASSWORDS)
+    ]
+    if weak:
+        return CheckResult(
+            "계정 비밀번호",
+            "fail",
+            f"약한 비밀번호를 쓰는 계정: {', '.join(sorted(weak))} — "
+            "uv run python -m scripts.init_db --seed --force 로 재발급할 것.",
+        )
+    return CheckResult("계정 비밀번호", "ok", f"계정 {len(rows)}개 모두 약한 값이 아님")
 
 
 def check_stage_coverage(

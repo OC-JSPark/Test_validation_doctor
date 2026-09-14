@@ -19,8 +19,8 @@ from app.preflight import (
     check_api_settings,
     check_defaults,
     check_roster_session_match,
-    check_seed_passwords,
     check_stage_coverage,
+    check_weak_passwords,
     check_validation_db,
     check_readonly_source,
     collect_stage_counts,
@@ -52,19 +52,15 @@ def main(argv: list[str] | None = None) -> int:
         _print(r)
         results.append(r)
 
-    import os
-
-    r = check_seed_passwords(
-        os.getenv("SEED_ADMIN_PASSWORD", "admin1234"),
-        os.getenv("SEED_DOCTOR_PASSWORD", "doctor1234"),
-    )
-    _print(r)
-    results.append(r)
-
     _section("2. 평가 DB (읽기/쓰기)")
     for r in check_validation_db(settings):
         _print(r)
         results.append(r)
+
+    # 계정 비밀번호는 설정이 아니라 DB 의 현재 상태를 본다.
+    r = check_weak_passwords(settings)
+    _print(r)
+    results.append(r)
 
     _section("3. 읽기 전용 소스")
     for r in check_readonly_source(
