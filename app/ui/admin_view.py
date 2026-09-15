@@ -80,7 +80,7 @@ def _render_dashboard() -> None:
             }
             for row in progress
         ],
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
     st.caption(
@@ -118,7 +118,7 @@ def _render_assignment_table(assignments: list[Assignment]) -> None:
             }
             for a in assignments
         ],
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
 
@@ -234,14 +234,14 @@ def _render_student_picker() -> list[str]:
     col_all, col_none, col_count = st.columns([1, 1, 2])
     col_all.button(
         "전체 선택",
-        use_container_width=True,
+        width="stretch",
         on_click=_set_all,
         args=([s.student_id for s in visible], True),
         disabled=not visible,
     )
     col_none.button(
         "전체 해제",
-        use_container_width=True,
+        width="stretch",
         on_click=_set_all,
         args=([s.student_id for s in students], False),
         disabled=not selected,
@@ -336,7 +336,7 @@ def _render_session_summary(student_ids: list[str], sessions: list[ScaleSession]
             }
             for student_id in student_ids
         ],
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
     if empty:
