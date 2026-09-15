@@ -10,11 +10,12 @@ DB 3개가 한꺼번에 노출되고, 비밀번호를 바꿀 때 서버마다 �
 
 | 값 | 동작 | 쓰는 곳 |
 | --- | --- | --- |
-| `env` (기본) | `.env` / 환경변수의 `*_DATABASE_URL` 을 그대로 쓴다 | 로컬 개발 |
-| `aws` | SSM 에서 조각을 읽어 접속 문자열을 조립한다 | dev / stg 서버 |
+| `aws` (기본) | SSM 에서 조각을 읽어 접속 문자열을 조립한다 | dev / stg 서버 |
+| `env` | `.env` / 환경변수의 `*_DATABASE_URL` 을 그대로 쓴다 | 로컬 개발 |
 
-기본값이 `env` 인 이유: 로컬 개발자가 AWS 자격증명 없이도 그대로 일할 수 있어야
-한다. 서버에서만 `SECRETS_BACKEND=aws` 를 켠다.
+**기본값이 `aws` 인 이유**: 서버에서 설정을 빠뜨렸을 때 조용히 localhost 로
+붙는 것보다, 자격증명이 없다고 크게 실패하는 편이 안전하다. 로컬 개발은
+`.env` 에 `SECRETS_BACKEND=env` 를 명시해서 쓴다.
 
 ## SSM 파라미터 구조
 
@@ -67,8 +68,13 @@ class DatabaseUrls:
 
 
 def use_aws() -> bool:
-    """AWS 에서 읽을지 여부. 기본은 아니오(로컬 개발)."""
-    return os.getenv("SECRETS_BACKEND", "env").strip().lower() == "aws"
+    """AWS 에서 읽을지 여부.
+
+    **기본은 AWS 다.** 서버에서 설정을 빠뜨렸을 때 조용히 localhost 로
+    붙는 것보다, 자격증명이 없다고 크게 실패하는 편이 안전하다.
+    로컬 개발은 `.env` 에 `SECRETS_BACKEND=env` 를 명시해서 쓴다.
+    """
+    return os.getenv("SECRETS_BACKEND", "aws").strip().lower() != "env"
 
 
 def _env_name() -> str:

@@ -61,22 +61,25 @@ def fake_ssm(monkeypatch):
 # --- 모드 선택 --------------------------------------------------------------
 
 
-def test_기본은_env_모드다(monkeypatch):
-    """로컬 개발자가 AWS 자격증명 없이도 그대로 일할 수 있어야 한다."""
+def test_기본은_aws_모드다(monkeypatch):
+    """서버에서 설정을 빠뜨렸을 때 조용히 localhost 로 붙으면 안 된다."""
     monkeypatch.delenv("SECRETS_BACKEND", raising=False)
-    assert use_aws() is False
-
-
-def test_aws_로_켤_수_있다(monkeypatch):
-    monkeypatch.setenv("SECRETS_BACKEND", "aws")
-    assert use_aws() is True
-    monkeypatch.setenv("SECRETS_BACKEND", "AWS")  # 대소문자 무관
     assert use_aws() is True
 
 
-def test_다른_값은_env_로_본다(monkeypatch):
-    monkeypatch.setenv("SECRETS_BACKEND", "vault")
+def test_env_는_명시해야_켜진다(monkeypatch):
+    """로컬 개발은 .env 에 SECRETS_BACKEND=env 를 적어야 한다."""
+    monkeypatch.setenv("SECRETS_BACKEND", "env")
     assert use_aws() is False
+    monkeypatch.setenv("SECRETS_BACKEND", "ENV")  # 대소문자 무관
+    assert use_aws() is False
+
+
+def test_오타나_빈_값은_aws_로_떨어진다(monkeypatch):
+    """'enviroment' 같은 오타로 조용히 localhost 를 쓰게 두지 않는다."""
+    for value in ("", "aws", "enviroment", "vault"):
+        monkeypatch.setenv("SECRETS_BACKEND", value)
+        assert use_aws() is True, f"{value!r} 에서 env 모드로 떨어졌다"
 
 
 # --- 접속 문자열 조립 -------------------------------------------------------
