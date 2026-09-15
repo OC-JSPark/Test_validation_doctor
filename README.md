@@ -17,6 +17,8 @@ AIMIE Kids 하루톡 대화에 대한 **전문의 평가 시스템** (Streamlit 
 | 외부 API | 하루톡 대화 본문 | 읽기 전용 (`EXTERNAL_API_BASE_URL`) |
 | **`validation_db`** | 계정 · 할당 · 평가 결과 | **읽기/쓰기** |
 
+서버에서는 세 DB 의 접속 정보를 `.env` 가 아니라 **AWS SSM** 에서 가져온다 (`SECRETS_BACKEND=aws`). 배포 §5-A 참고.
+
 두 DB 조회는 커넥션이 `read_only` 로 열려 쓰기 쿼리가 DB 단계에서 거부된다.
 접근 지점도 `app/student_directory.py` / `app/session_directory.py` 두 곳뿐이라,
 인스턴스 DB 로 옮길 때는 접속 문자열과 그 파일의 쿼리 상수만 바꾸면 된다.
@@ -180,6 +182,7 @@ DB 테스트는 실제 `validation_db` 에 붙어 트랜잭션 롤백으로 격�
 | `scripts/init_db.py` | 스키마 생성 + 데모 계정 시드 |
 | `scripts/preflight.py` | 배포 전 점검 (실패 시 종료 코드 1) |
 | `app/preflight.py` | 점검 판정 로직 (순수 함수) |
+| `app/secret_loader.py` | AWS SSM 에서 DB 접속 정보 조회 (`SECRETS_BACKEND=aws`) |
 
 ## 척도와 점수
 
@@ -285,7 +288,62 @@ vi .env
 
 ### 5. DB 주소·계정 채우기 — 가장 중요한 단계
 
-**반드시 바꿀 것.** 안 바꾸면 경고 없이 `localhost` 로 붙으러 간다.
+접속 정보를 어디서 가져올지 `SECRETS_BACKEND` 가 결정한다.
+
+| 값 | 동작 | 쓰는 곳 |
+| --- | --- | --- |
+| `env` (기본) | `.env` 의 `*_DATABASE_URL` 을 그대로 쓴다 | 로컬 개발 |
+| `aws` | **AWS SSM Parameter Store** 에서 조각을 읽어 조립한다 | **dev / stg 서버 (권장)** |
+
+#### 5-A. AWS 에서 가져오기 (서버 권장)
+
+접속 문자열을 서버 파일에 평문으로 두지 않는다. 파일이 유출되면 DB 3개가 한꺼번에
+노출되고, 비밀번호를 바꿀 때 서버마다 파일을 고쳐야 한다.
+
+```bash
+# .env 에는 이 세 줄만 있으면 된다. DB 주소는 적지 않는다.
+SECRETS_BACKEND=aws
+ENV=dev                      # SSM 경로 /aimie/{ENV}/... 에 쓰인다
+AWS_REGION=ap-northeast-2
+```
+
+SSM 에 아래 파라미터를 미리 만들어 둔다. 서버 하나에 데이터베이스 3개가 있는
+구조라 **접속 정보는 공유하고 DB 이름만 다르다.**
+
+| 파라미터 | 용도 | 필수 |
+| --- | --- | --- |
+| `/aimie/{ENV}/DB_HOST` | 공통 호스트 | ✅ |
+| `/aimie/{ENV}/DB_PORT` | 공통 포트 | ✅ |
+| `/aimie/{ENV}/DB_USER` | 공통 사용자 | ✅ |
+| `/aimie/DB_PASS` | 공통 비밀번호 (환경 무관) | ✅ |
+| `/aimie/{ENV}/DB_NAME` | 학생 명부 DB 이름 | ✅ |
+| `/aimie/{ENV}/AI_DB_NAME` | 척도검사 DB 이름 | ✅ |
+| `/aimie/{ENV}/VALIDATION_DB_NAME` | 평가 DB 이름 | 없으면 `validation_db` |
+| `/aimie/{ENV}/DB_RO_USER` | 읽기 전용 계정 | 없으면 공통 계정 |
+| `/aimie/{ENV}/DB_RO_PASS` | 읽기 전용 비밀번호 | 없으면 공통 비밀번호 |
+
+`DB_RO_USER` / `DB_RO_PASS` 를 두면 **학생 명부·세션 DB 에만** 적용된다.
+평가 DB 는 쓰기가 필요하므로 공통 계정을 쓴다.
+
+필요한 IAM 권한:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": ["ssm:GetParameter"],
+  "Resource": "arn:aws:ssm:ap-northeast-2:<계정ID>:parameter/aimie/*"
+}
+```
+`SecureString` 을 쓰면 `kms:Decrypt` 도 함께 필요하다.
+
+> **필수 파라미터가 없으면 앱이 뜨지 않는다.** 조용히 `localhost` 로 떨어지는 것보다
+> 뜨지 않는 편이 안전하기 때문이다. 권한·네트워크 오류도 마찬가지로 그대로 올라온다
+> (기본값으로 묻히지 않는다).
+
+조회 결과는 캐시한다. Streamlit 은 상호작용마다 재실행되므로 캐시가 없으면
+화면을 누를 때마다 SSM 을 호출한다.
+
+#### 5-B. `.env` 에 직접 적기 (로컬 개발)
 
 ```bash
 # 평가 DB (읽기/쓰기) — 이 시스템이 만드는 데이터가 들어간다
@@ -303,7 +361,12 @@ EXTERNAL_API_LOGIN_ID=<계정>
 EXTERNAL_API_PASSWORD=<비밀번호>
 
 # 전문의 계정 수
-SEED_DOCTOR_COUNT=3
+SEED_DOCTOR_COUNT=10
+```
+```bash
+# --force빼면 이미 있는 계정 안건드리고 없는것만 추가만든다.
+# 현재 3이있었다면 10이기에 7만 더 만든다.
+SEED_DOCTOR_COUNT=10 uv run python -m scripts.init_db --seed 
 ```
 
 > **계정 비밀번호는 `.env` 에 넣지 않는다.** 서버 파일에 평문으로 남기 때문이다.
@@ -358,17 +421,22 @@ uv run python -m scripts.init_db --seed
 ```
 ================================================================
   발급된 비밀번호 — 지금 받아 적으세요. 다시 볼 수 없습니다.
+  계정마다 다른 값입니다. 각 담당자에게 개별 전달하세요.
 ================================================================
-  관리자   Sf69ZszBRjMzJ5pp8nea
-  전문의   kR7vQm2XbnT4wLpZ9dCe
+  계정           비밀번호
+  ------------------------------------------------------------
+  admin        gY9&ydnybUer#DLD*^kA
+  doctor01     e_wuZT!EV#@VWJqNyu5J
+  doctor02     wo!R8&A2LDCX-u+ze$u=
+  doctor03     ZQ45s7y6oShpW#ru8t%3
 ================================================================
   분실하면 --seed --force 로 재발급해야 합니다.
 ```
 
 | 상황 | 방법 |
 | --- | --- |
-| **서버 (권장)** | `--seed` → 난수 20자 발급, 1회 출력 |
-| 직접 정하고 싶을 때 | `--seed --prompt` → 터미널 입력 (화면에 안 찍힘, 8자 이상) |
+| **서버 (권장)** | `--seed` → **계정마다** 난수 20자 발급, 1회 출력 |
+| 직접 정하고 싶을 때 | `--seed --prompt` → **계정마다** 터미널 입력 (화면에 안 찍힘, 8자 이상) |
 | 분실·유출 시 | `--seed --force` → 재발급 |
 | 로컬 개발 | `SEED_ADMIN_PASSWORD` / `SEED_DOCTOR_PASSWORD` 환경변수 |
 
@@ -378,8 +446,22 @@ uv run python -m scripts.init_db --seed
 §8 의 점검이 **저장된 해시에 직접 대입해** 약한 비밀번호가 남아 있는지 확인하므로,
 데모 계정을 그대로 둔 채로는 배포가 통과되지 않는다.
 
-> 전문의 계정은 전원 같은 비밀번호를 받는다. 계정별로 다르게 주거나 본인이 바꾸게
-> 하려면 계정 관리 화면이 필요하다 — 현재 미구현이다.
+**계정마다 다른 비밀번호를 준다.** 여러 전문의가 같은 값을 쓰면 한 명이 유출되어도
+누구 계정인지 추적할 수 없고, 평가 데이터에 담당 전문의가 기록되는 시스템이라
+계정 분리가 의미를 잃는다.
+
+#### 전문의를 나중에 더 추가하려면
+
+`SEED_DOCTOR_COUNT` 를 늘리고 **`--force` 없이** 다시 돌린다.
+이미 있는 계정은 건드리지 않고 없는 것만 만든다.
+
+```bash
+SEED_DOCTOR_COUNT=10 uv run python -m scripts.init_db --seed
+# → doctor04 ~ doctor10 만 새로 생성, 기존 doctor01~03 비밀번호는 그대로
+```
+
+> 전문의 본인이 비밀번호를 바꿀 방법은 아직 없다. 관리자가 재발급해 전달해야 한다
+> (`--seed --force`). 계정 관리 화면은 미구현이다.
 
 ### 8. 배포 전 점검 — 여기서 막히면 앱을 띄우지 말 것
 

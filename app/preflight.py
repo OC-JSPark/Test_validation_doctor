@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import os
 from collections import Counter
 from dataclasses import dataclass
 from typing import Literal
@@ -26,6 +27,7 @@ from app.config import (
     DEFAULT_STUDENT_DB_URL,
     Settings,
 )
+from app.secret_loader import use_aws
 from app.security import verify_password
 
 Status = Literal["ok", "warn", "fail"]
@@ -74,6 +76,16 @@ def check_defaults(settings: Settings) -> list[CheckResult]:
     stg 에서 환경변수를 빠뜨리면 앱이 에러 없이 localhost 로 붙으러 간다.
     가장 자주 겪은 함정이라 가장 먼저 본다.
     """
+    if use_aws():
+        # AWS 모드에서는 접속 문자열이 SSM 에서 오므로 기본값 경고가 의미 없다.
+        return [
+            CheckResult(
+                "접속 정보 출처",
+                "ok",
+                f"AWS SSM (ENV={os.getenv('ENV', '(미설정)')}) — .env 의 DB 주소는 무시된다",
+            )
+        ]
+
     targets = [
         ("평가 DB", settings.database_url, DEFAULT_DATABASE_URL, "VALIDATION_DATABASE_URL"),
         ("학생 명부 DB", settings.student_db_url, DEFAULT_STUDENT_DB_URL, "STUDENT_SOURCE_DATABASE_URL"),

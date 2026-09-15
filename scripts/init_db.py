@@ -13,17 +13,22 @@
 **어디에도 저장하지 않는다.** 코드에 넣으면 git 에 영구히 남고 저장소 접근자
 전원이 보게 된다. `.env` 도 서버에 평문으로 남는다.
 
-그래서 기본 동작은 **생성 시점에 난수로 발급하고 화면에 한 번만 출력**하는 것이다.
-운영자가 그때 받아 적어 안전한 곳(비밀번호 관리자)에 보관한다.
+그래서 기본 동작은 **계정마다 난수로 발급하고 화면에 한 번만 출력**하는 것이다.
+운영자가 그때 받아 적어 각 담당자에게 개별 전달한다.
 다시 볼 수 없고, 잊었으면 `--force` 로 재발급한다.
 
-| 상황 | 방법 |
-| --- | --- |
-| 운영/dev 서버 | 인자 없이 `--seed` → 난수 발급, 1회 출력 (권장) |
-| 운영자가 직접 정하고 싶을 때 | `--seed --prompt` → 터미널 입력 (화면에 안 찍힘) |
-| 로컬 개발 | `SEED_ADMIN_PASSWORD` / `SEED_DOCTOR_PASSWORD` 환경변수 |
+**계정마다 다른 비밀번호를 준다.** 여러 전문의가 같은 값을 쓰면 한 명이 유출되어도
+누구 계정인지 추적할 수 없고, 평가 데이터에 담당 전문의가 기록되는 시스템이라
+계정 분리가 의미를 잃는다.
 
-환경변수는 **로컬 편의용**이다. 서버에서는 쓰지 않는 것을 권한다.
+| 상황 | 방법 | 계정별 |
+| --- | --- | --- |
+| 운영/dev 서버 | 인자 없이 `--seed` → 난수 발급, 1회 출력 (권장) | **다름** |
+| 운영자가 직접 정하고 싶을 때 | `--seed --prompt` → 계정마다 터미널 입력 | **다름** |
+| 로컬 개발 | `SEED_ADMIN_PASSWORD` / `SEED_DOCTOR_PASSWORD` 환경변수 | 같음 |
+
+환경변수는 **로컬 편의용**이다. 서버에서는 쓰지 않는 것을 권한다 —
+설정하면 해당 역할의 계정이 전부 같은 비밀번호를 받는다.
 """
 
 from __future__ import annotations
@@ -89,7 +94,11 @@ def seed_users(
 ) -> tuple[list[str], dict[str, tuple[str, str]]]:
     """계정 생성. 이미 있으면 `force` 없이는 건드리지 않는다.
 
-    (만들어진 계정 목록, {역할: (비밀번호, 출처)}) 를 돌려준다.
+    **비밀번호는 계정마다 따로 발급한다.** 여러 전문의가 같은 비밀번호를 쓰면
+    한 명이 유출되어도 누구 계정인지 추적할 수 없고, 평가 데이터에 담당 전문의가
+    기록되는 시스템이라 계정 분리가 의미를 잃는다.
+
+    (만들어진 계정 목록, {계정ID: (비밀번호, 출처)}) 를 돌려준다.
     비밀번호는 호출부가 한 번 출력하고 버린다 — 어디에도 저장하지 않는다.
     """
     targets: list[tuple[str, str, str, str]] = [
@@ -105,41 +114,46 @@ def seed_users(
     if not pending:
         return [], {}
 
-    secrets_by_role: dict[str, tuple[str, str]] = {}
+    secrets_by_user: dict[str, tuple[str, str]] = {}
     created: list[str] = []
     for user_id, name, role, role_label in pending:
-        if role_label not in secrets_by_role:
-            env_name = (
-                "SEED_ADMIN_PASSWORD" if role == ROLE_ADMIN else "SEED_DOCTOR_PASSWORD"
-            )
-            secrets_by_role[role_label] = resolve_password(
-                role_label, env_name, prompt=prompt
-            )
-        password, _ = secrets_by_role[role_label]
+        env_name = (
+            "SEED_ADMIN_PASSWORD" if role == ROLE_ADMIN else "SEED_DOCTOR_PASSWORD"
+        )
+        # 계정마다 호출한다 — 난수는 매번 다른 값이 나온다.
+        # (환경변수를 설정한 경우에만 같은 값이 공유된다. 로컬 개발용.)
+        password, source = resolve_password(
+            f"{role_label} [{user_id}]", env_name, prompt=prompt
+        )
         users_repo.upsert_user(conn, user_id, name, role, password)
+        secrets_by_user[user_id] = (password, source)
         created.append(user_id)
 
-    return created, secrets_by_role
+    return created, secrets_by_user
 
 
-def _announce(secrets_by_role: dict[str, tuple[str, str]]) -> None:
-    """발급된 비밀번호를 한 번만 출력한다."""
-    generated = {r: p for r, (p, src) in secrets_by_role.items() if src == "generated"}
+def _announce(secrets_by_user: dict[str, tuple[str, str]]) -> None:
+    """발급된 비밀번호를 한 번만 출력한다. 계정마다 다른 값이다."""
+    generated = {u: p for u, (p, src) in secrets_by_user.items() if src == "generated"}
     if not generated:
-        sources = {src for _, src in secrets_by_role.values()}
+        sources = {src for _, src in secrets_by_user.values()}
         if "env" in sources:
-            print("  비밀번호: 환경변수 값을 사용했습니다 (로컬 개발용).")
+            print("  비밀번호: 환경변수 값을 사용했습니다 (로컬 개발용, 계정 공통).")
         if "prompt" in sources:
             print("  비밀번호: 입력하신 값으로 설정했습니다.")
         return
 
+    width = 64
     print()
-    print("=" * 64)
+    print("=" * width)
     print("  발급된 비밀번호 — 지금 받아 적으세요. 다시 볼 수 없습니다.")
-    print("=" * 64)
-    for role_label, password in generated.items():
-        print(f"  {role_label:6} {password}")
-    print("=" * 64)
+    print("  계정마다 다른 값입니다. 각 담당자에게 개별 전달하세요.")
+    print("=" * width)
+    print(f"  {'계정':<12} {'비밀번호'}")
+    print("  " + "-" * (width - 4))
+    for user_id, password in generated.items():
+        print(f"  {user_id:<12} {password}")
+    print("=" * width)
     print("  분실하면 --seed --force 로 재발급해야 합니다.")
     print()
 
