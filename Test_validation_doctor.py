@@ -26,7 +26,7 @@ def main() -> None:
     with st.sidebar:
         st.markdown(f"**{user.name}**")
         st.caption(f"{user.user_id} · {user.role}")
-        if st.button("로그아웃", use_container_width=True):
+        if st.button("로그아웃", width="stretch"):
             logout()
             st.rerun()
 

@@ -172,8 +172,19 @@ def load_database_urls() -> DatabaseUrls:
     validation_name = get_parameter_or(
         f"{prefix}/VALIDATION_DB_NAME", DEFAULT_VALIDATION_DB_NAME
     )
-    student_name = get_parameter(f"{prefix}/DB_NAME")
-    session_name = get_parameter(f"{prefix}/AI_DB_NAME")
+
+    # `DB_NAME` 은 이름과 달리 **척도검사(AI) DB** 를 가리킨다.
+    # 실제 값이 `aimie_kids_dev_ai` 라, 이름만 보고 학생 명부로 쓰면
+    # 명부가 비어 할당을 만들 수 없다. 기존 파라미터라 그대로 두고 여기서 매핑한다.
+    session_name = get_parameter(f"{prefix}/DB_NAME")
+
+    # 학생 명부 DB 는 SSM 에 전용 파라미터가 없어 이름을 직접 지정한다.
+    # 같은 경로에 파라미터를 만들어 두면 그 값이 우선한다.
+    #
+    # ⚠️ 이름이 env 를 타지 않는다. stg 에 올릴 때는 이 값(또는 SSM 파라미터)을
+    #    그 환경의 DB 이름으로 바꿔야 한다. 그러지 않으면 stg 에서도 dev 명부를 본다.
+    #    preflight 의 '명부·세션 정합성' 검사가 교집합 0 으로 잡아낸다.
+    student_name = get_parameter_or(f"{prefix}/aimie_kids_dev_app", "aimie_kids_dev_app")
 
     return DatabaseUrls(
         validation=build_dsn(host, port, validation_name, user, password),

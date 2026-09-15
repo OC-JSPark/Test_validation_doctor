@@ -16,7 +16,7 @@ def render() -> None:
     with st.form("login_form"):
         user_id = st.text_input("아이디")
         password = st.text_input("비밀번호", type="password")
-        submitted = st.form_submit_button("로그인", use_container_width=True)
+        submitted = st.form_submit_button("로그인", width="stretch")
 
     if not submitted:
         return

@@ -54,7 +54,7 @@ def _render_todo_list(assignments: list[Assignment]) -> None:
             }
             for a in assignments
         ],
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
 
@@ -147,7 +147,7 @@ def _render_evaluation(evaluation_set: EvaluationSet) -> None:
     st.divider()
     header_left, header_right = st.columns([3, 1])
     with header_right:
-        if st.button("🔄 대화 다시 불러오기", use_container_width=True):
+        if st.button("🔄 대화 다시 불러오기", width="stretch"):
             st.session_state["doctor_force_refresh"] = True
             st.rerun()
 
@@ -258,21 +258,21 @@ def _render_evaluation(evaluation_set: EvaluationSet) -> None:
     col_prev, col_next, col_save, col_done = st.columns([1, 1, 1, 2])
     col_prev.button(
         "⬅ 이전",
-        use_container_width=True,
+        width="stretch",
         disabled=turn_index == 0,
         on_click=_move,
         args=(assignment.id, turn_index, -1, total - 1),
     )
     col_next.button(
         "다음 ➡",
-        use_container_width=True,
+        width="stretch",
         disabled=turn_index >= total - 1,
         on_click=_move,
         args=(assignment.id, turn_index, 1, total - 1),
     )
     col_save.button(
         "💾 임시저장",
-        use_container_width=True,
+        width="stretch",
         disabled=locked,
         on_click=_autosave,
         args=(assignment.id, turn_index),
@@ -280,7 +280,7 @@ def _render_evaluation(evaluation_set: EvaluationSet) -> None:
 
     with col_done:
         if locked:
-            if st.button("🔓 수정하기 (잠금 해제)", use_container_width=True):
+            if st.button("🔓 수정하기 (잠금 해제)", width="stretch"):
                 with connection() as conn:
                     doctor_service.reopen_assignment(conn, assignment.id)
                 st.rerun()
@@ -289,7 +289,7 @@ def _render_evaluation(evaluation_set: EvaluationSet) -> None:
             if st.button(
                 "✅ 최종 완료",
                 type="primary",
-                use_container_width=True,
+                width="stretch",
                 disabled=not can_complete,
                 help=None if can_complete else "모든 턴의 점수와 판단 이유를 입력해야 활성화됩니다.",
             ):
