@@ -187,6 +187,61 @@ def test_환경변수가_없으면_난수로_발급한다(monkeypatch):
     assert len(password) >= 20
 
 
+@pytest.mark.db
+def test_계정마다_다른_비밀번호가_발급된다(conn):
+    """같은 값을 공유하면 유출 시 누구 계정인지 추적할 수 없다."""
+    from app.services import auth
+    from scripts.init_db import seed_users
+
+    created, secrets_by_user = seed_users(conn, force=True, doctor_count=5)
+    passwords = [pw for pw, _ in secrets_by_user.values()]
+
+    assert len(created) == 6  # admin + 전문의 5
+    assert len(set(passwords)) == len(passwords), "비밀번호가 중복 발급됐다"
+    assert all(src == "generated" for _, src in secrets_by_user.values())
+
+
+@pytest.mark.db
+def test_남의_비밀번호로는_로그인되지_않는다(conn):
+    from app.services import auth
+    from scripts.init_db import seed_users
+
+    _, secrets_by_user = seed_users(conn, force=True, doctor_count=2)
+
+    for user_id, (password, _) in secrets_by_user.items():
+        assert auth.login(conn, user_id, password), f"{user_id} 자기 비밀번호 로그인 실패"
+
+    other_pw = secrets_by_user["doctor01"][0]
+    assert auth.login(conn, "doctor02", other_pw) is None
+
+
+@pytest.mark.db
+def test_이미_있는_계정은_건드리지_않는다(conn):
+    """SEED_DOCTOR_COUNT 를 늘려 전문의를 추가할 때 기존 계정이 유지돼야 한다.
+
+    공용 DB 에 이미 doctor01~03 이 있을 수 있으므로, 어떤 계정이 미리
+    존재하는지 먼저 확인하고 그 기준으로 검증한다.
+    """
+    from app.repositories import users as users_repo
+    from scripts.init_db import seed_users
+
+    seed_users(conn, force=True, doctor_count=2)
+    before = users_repo.get_password_hash(conn, "doctor01")
+    existing = {
+        f"doctor{i:02d}"
+        for i in range(1, 5)
+        if users_repo.get_user(conn, f"doctor{i:02d}") is not None
+    }
+
+    created, _ = seed_users(conn, force=False, doctor_count=4)
+
+    # 없던 계정만 만들어지고, 있던 계정은 목록에 없다
+    assert set(created) == {f"doctor{i:02d}" for i in range(1, 5)} - existing
+    assert not (set(created) & existing)
+    # 기존 계정의 비밀번호는 그대로
+    assert users_repo.get_password_hash(conn, "doctor01") == before
+
+
 # --- DB 의 약한 비밀번호 감지 ------------------------------------------------
 
 
