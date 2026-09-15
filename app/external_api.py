@@ -60,8 +60,14 @@ class ChatAPIClient:
         body = self._request("POST", self.settings.api_login_path, json=payload)
         token = body.get("accessToken")
         if not token:
-            result = body.get("result") or body.get("message") or "(응답에 사유 없음)"
-            raise ExternalAPIError(f"로그인 응답에 accessToken 이 없습니다: {result}")
+            # 이 API 는 로그인 실패도 HTTP 200 으로 주고 본문에만 사유를 담는다.
+            # `result` 는 'FAIL' 뿐이라 쓸모가 없으므로 `message` 를 먼저 본다.
+            reason = body.get("message") or body.get("result") or "(응답에 사유 없음)"
+            raise ExternalAPIError(
+                f"외부 API 로그인에 실패했습니다: {reason}\n"
+                f"    EXTERNAL_API_LOGIN_ID / EXTERNAL_API_PASSWORD 를 확인할 것"
+                f" (현재 ID: {login_id or '(비어 있음)'})."
+            )
         self.token = token
         return token
 
