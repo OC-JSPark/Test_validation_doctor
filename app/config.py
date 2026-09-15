@@ -11,6 +11,8 @@ from functools import lru_cache
 
 from dotenv import load_dotenv
 
+from app.secret_loader import load_database_urls, use_aws
+
 load_dotenv(override=False)
 
 # 신규 로컬 DB 기본 접속 문자열 (docker-compose.yml 의 test-db 기준).
@@ -123,12 +125,29 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
+        # 서버(SECRETS_BACKEND=aws)에서는 접속 문자열을 .env 가 아니라 SSM 에서 가져온다.
+        # 실패하면 조용히 localhost 로 떨어지지 않고 예외를 올린다 — 잘못된 DB 에
+        # 붙는 것보다 뜨지 않는 편이 낫다.
+        db_urls = load_database_urls() if use_aws() else None
+
         return cls(
             # 루트 .env 의 DATABASE_URL 은 기존 서비스용이라 쓰지 않는다.
             # 이 프로젝트는 VALIDATION_DATABASE_URL 만 본다.
-            database_url=os.getenv("VALIDATION_DATABASE_URL", DEFAULT_DATABASE_URL),
-            student_db_url=os.getenv("STUDENT_SOURCE_DATABASE_URL", DEFAULT_STUDENT_DB_URL),
-            session_db_url=os.getenv("SESSION_SOURCE_DATABASE_URL", DEFAULT_SESSION_DB_URL),
+            database_url=(
+                db_urls.validation
+                if db_urls
+                else os.getenv("VALIDATION_DATABASE_URL", DEFAULT_DATABASE_URL)
+            ),
+            student_db_url=(
+                db_urls.student
+                if db_urls
+                else os.getenv("STUDENT_SOURCE_DATABASE_URL", DEFAULT_STUDENT_DB_URL)
+            ),
+            session_db_url=(
+                db_urls.session
+                if db_urls
+                else os.getenv("SESSION_SOURCE_DATABASE_URL", DEFAULT_SESSION_DB_URL)
+            ),
             api_base_url=os.getenv("EXTERNAL_API_BASE_URL", DEFAULT_API_BASE_URL).rstrip("/"),
             api_token=os.getenv("EXTERNAL_API_TOKEN") or None,
             api_login_id=os.getenv("EXTERNAL_API_LOGIN_ID") or None,
