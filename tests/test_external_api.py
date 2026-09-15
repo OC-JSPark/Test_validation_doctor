@@ -108,7 +108,43 @@ def test_토큰이_없으면_설정된_계정으로_자동_로그인한다(chat_
 def test_accessToken_이_없는_로그인_응답은_오류(settings):
     responses.add(responses.POST, LOGIN_URL, json={"result": "FAIL"}, status=200)
 
-    with pytest.raises(ExternalAPIError, match="accessToken"):
+    with pytest.raises(ExternalAPIError, match="로그인에 실패"):
+        ChatAPIClient(settings).login("id", "pw")
+
+
+@responses.activate
+def test_로그인_실패시_API_가_알려준_사유를_보여준다(settings):
+    """이 API 는 실패도 HTTP 200 으로 주고 본문에만 사유를 담는다.
+
+    dev 배포에서 실제로 겪은 상황 — 'FAIL' 만 보여주면 계정 문제인지
+    경로 문제인지 알 수 없어 원인을 찾는 데 시간이 걸렸다.
+    """
+    responses.add(
+        responses.POST,
+        LOGIN_URL,
+        json={
+            "result": "FAIL",
+            "resultCode": 201,
+            "message": "아이디 또는 비밀번호가 올바르지 않습니다.",
+            "accessToken": None,
+        },
+        status=200,
+    )
+
+    with pytest.raises(ExternalAPIError) as excinfo:
+        ChatAPIClient(settings).login("teacher001", "wrong")
+
+    detail = str(excinfo.value)
+    assert "아이디 또는 비밀번호가 올바르지 않습니다" in detail  # API 사유
+    assert "EXTERNAL_API_LOGIN_ID" in detail                     # 어디를 고칠지
+    assert "teacher001" in detail                                # 어떤 계정으로 시도했는지
+
+
+@responses.activate
+def test_사유가_없으면_result_라도_보여준다(settings):
+    responses.add(responses.POST, LOGIN_URL, json={"result": "FAIL"}, status=200)
+
+    with pytest.raises(ExternalAPIError, match="FAIL"):
         ChatAPIClient(settings).login("id", "pw")
 
 
