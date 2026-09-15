@@ -32,13 +32,14 @@ class FakeSSM:
         return {"Parameter": {"Value": self.params[Name]}}
 
 
+# 실제 SSM 과 같은 구성: DB_NAME 이 이름과 달리 척도검사(AI) DB 를 담고,
+# 학생 명부용 파라미터는 없다.
 _BASE_PARAMS = {
     "/aimie/dev/DB_HOST": "dev-db.internal",
     "/aimie/dev/DB_PORT": "5432",
     "/aimie/dev/DB_USER": "app_user",
     "/aimie/DB_PASS": "p@ss word/2026",
-    "/aimie/dev/DB_NAME": "aimie_kids_dev_app",
-    "/aimie/dev/AI_DB_NAME": "aimie_kids_dev_ai",
+    "/aimie/dev/DB_NAME": "aimie_kids_dev_ai",
 }
 
 
@@ -102,6 +103,32 @@ def test_세_DB_를_모두_만든다(fake_ssm):
     assert urls.student.endswith("/aimie_kids_dev_app")
     assert urls.session.endswith("/aimie_kids_dev_ai")
     assert all("dev-db.internal:5432" in u for u in (urls.validation, urls.student, urls.session))
+
+
+def test_DB_NAME_은_척도검사_DB_다(fake_ssm):
+    """이름은 앱 DB 같지만 실제 값이 AI DB 다.
+
+    이름만 보고 학생 명부로 쓰면 명부가 비어 할당을 만들 수 없다.
+    """
+    fake_ssm({**_BASE_PARAMS, "/aimie/dev/DB_NAME": "어떤_AI_DB"})
+
+    urls = load_database_urls()
+
+    assert urls.session.endswith("/어떤_AI_DB")
+    assert not urls.student.endswith("/어떤_AI_DB")
+
+
+def test_학생_명부_이름을_SSM_으로_덮어쓸_수_있다(fake_ssm):
+    """SSM 에 파라미터를 만들어 두면 코드 기본값보다 우선한다."""
+    fake_ssm({**_BASE_PARAMS, "/aimie/dev/aimie_kids_dev_app": "다른_명부_DB"})
+
+    assert load_database_urls().student.endswith("/다른_명부_DB")
+
+
+def test_학생_명부_파라미터가_없으면_기본_이름을_쓴다(fake_ssm):
+    fake_ssm(_BASE_PARAMS)
+
+    assert load_database_urls().student.endswith("/aimie_kids_dev_app")
 
 
 def test_평가DB_이름을_SSM_에서_덮어쓸_수_있다(fake_ssm):
