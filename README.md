@@ -327,6 +327,9 @@ SSM 에 아래 파라미터를 미리 만들어 둔다. 서버 하나에 데이�
 | `/aimie/{ENV}/VALIDATION_DB_NAME` | 평가 DB 이름 | 없으면 `validation_db` |
 | `/aimie/{ENV}/DB_RO_USER` | 읽기 전용 계정 | 없으면 공통 계정 |
 | `/aimie/{ENV}/DB_RO_PASS` | 읽기 전용 비밀번호 | 없으면 공통 비밀번호 |
+| `/aimie/{ENV}/EXTERNAL_API_LOGIN_ID` | 외부 API 계정 | 없으면 대화 조회 불가 |
+| `/aimie/{ENV}/EXTERNAL_API_PASSWORD` | 외부 API 비밀번호 (**SecureString**) | 〃 |
+| `/aimie/{ENV}/EXTERNAL_API_TOKEN` | 발급받은 토큰 (계정 대신 쓸 때) | 선택 |
 
 `DB_RO_USER` / `DB_RO_PASS` 를 두면 **학생 명부·세션 DB 에만** 적용된다.
 평가 DB 는 쓰기가 필요하므로 공통 계정을 쓴다.
@@ -341,6 +344,13 @@ SSM 에 아래 파라미터를 미리 만들어 둔다. 서버 하나에 데이�
 }
 ```
 `SecureString` 을 쓰면 `kms:Decrypt` 도 함께 필요하다.
+
+> **API 계정도 SSM 에 둔다.** `.env` 에 적으면 서버 파일에 평문으로 남고,
+> 누가 언제 읽었는지 알 수 없다. SSM 은 KMS 로 암호화하고 CloudTrail 에
+> 접근 기록이 남는다.
+>
+> **`ENV` 의 대소문자가 경로에 그대로 들어간다.** 인프라가 `/aimie/dev/...` 로
+> 만들었는데 `ENV=DEV` 로 두면 아무것도 못 찾는다 — SSM 이름은 대소문자를 구분한다.
 
 > **필수 파라미터가 없으면 앱이 뜨지 않는다.** 조용히 `localhost` 로 떨어지는 것보다
 > 뜨지 않는 편이 안전하기 때문이다. 권한·네트워크 오류도 마찬가지로 그대로 올라온다

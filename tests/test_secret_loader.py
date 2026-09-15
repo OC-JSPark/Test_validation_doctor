@@ -13,6 +13,7 @@ from app.secret_loader import (
     DEFAULT_VALIDATION_DB_NAME,
     SecretLoadError,
     build_dsn,
+    load_api_credentials,
     load_database_urls,
     use_aws,
 )
@@ -170,6 +171,70 @@ def test_읽기전용_계정이_없으면_공통_계정으로_떨어진다(fake_
 
     assert "app_user" in urls.student
     assert "app_user" in urls.session
+
+
+# --- 외부 API 계정 ----------------------------------------------------------
+
+
+def test_API_계정을_SSM_에서_가져온다(fake_ssm):
+    """서버 .env 에 API 비밀번호를 평문으로 남기지 않기 위한 경로."""
+    fake_ssm(
+        {
+            **_BASE_PARAMS,
+            "/aimie/dev/EXTERNAL_API_LOGIN_ID": "svc-validation",
+            "/aimie/dev/EXTERNAL_API_PASSWORD": "s3cret!",
+        }
+    )
+
+    creds = load_api_credentials()
+
+    assert creds.login_id == "svc-validation"
+    assert creds.password == "s3cret!"
+    assert creds.is_usable
+
+
+def test_SSM_경로는_대소문자를_구분한다(fake_ssm, monkeypatch):
+    """ENV 값이 경로에 그대로 들어간다.
+
+    인프라가 `/aimie/dev/...` 로 만들었는데 ENV=DEV 로 두면 아무것도 못 찾는다.
+    AWS SSM 파라미터 이름은 대소문자를 구분하므로 양쪽 표기를 맞춰야 한다.
+    """
+    fake_ssm({**_BASE_PARAMS, "/aimie/dev/EXTERNAL_API_LOGIN_ID": "svc-validation"})
+
+    assert load_api_credentials().login_id == "svc-validation"  # ENV=dev
+
+    secret_loader.clear_cache()
+    monkeypatch.setenv("ENV", "DEV")  # 대문자로 바꾸면 경로가 달라져 못 찾는다
+
+    assert load_api_credentials().login_id is None
+
+
+def test_토큰만_있어도_쓸_수_있다(fake_ssm):
+    fake_ssm({**_BASE_PARAMS, "/aimie/dev/EXTERNAL_API_TOKEN": "eyJhbG..."})
+
+    creds = load_api_credentials()
+
+    assert creds.token == "eyJhbG..."
+    assert creds.is_usable
+
+
+def test_계정이_없어도_앱은_뜬다(fake_ssm):
+    """관리자 화면(할당·CSV)은 외부 API 를 쓰지 않는다.
+
+    계정이 없다고 전체를 막으면 손해가 크다. preflight 가 배포 전에 잡는다.
+    """
+    fake_ssm(_BASE_PARAMS)
+
+    creds = load_api_credentials()
+
+    assert creds.login_id is None and creds.password is None
+    assert creds.is_usable is False
+
+
+def test_ID_만_있고_비밀번호가_없으면_못_쓴다(fake_ssm):
+    fake_ssm({**_BASE_PARAMS, "/aimie/dev/EXTERNAL_API_LOGIN_ID": "svc"})
+
+    assert load_api_credentials().is_usable is False
 
 
 # --- 환경 분리 --------------------------------------------------------------

@@ -11,7 +11,7 @@ from functools import lru_cache
 
 from dotenv import load_dotenv
 
-from app.secret_loader import load_database_urls, use_aws
+from app.secret_loader import load_api_credentials, load_database_urls, use_aws
 
 load_dotenv(override=False)
 
@@ -129,6 +129,8 @@ class Settings:
         # 실패하면 조용히 localhost 로 떨어지지 않고 예외를 올린다 — 잘못된 DB 에
         # 붙는 것보다 뜨지 않는 편이 낫다.
         db_urls = load_database_urls() if use_aws() else None
+        # API 계정도 같은 경로로 가져온다. 서버 `.env` 에 비밀값을 남기지 않는다.
+        api = load_api_credentials() if use_aws() else None
 
         return cls(
             # 루트 .env 의 DATABASE_URL 은 기존 서비스용이라 쓰지 않는다.
@@ -149,9 +151,13 @@ class Settings:
                 else os.getenv("SESSION_SOURCE_DATABASE_URL", DEFAULT_SESSION_DB_URL)
             ),
             api_base_url=os.getenv("EXTERNAL_API_BASE_URL", DEFAULT_API_BASE_URL).rstrip("/"),
-            api_token=os.getenv("EXTERNAL_API_TOKEN") or None,
-            api_login_id=os.getenv("EXTERNAL_API_LOGIN_ID") or None,
-            api_password=os.getenv("EXTERNAL_API_PASSWORD") or None,
+            api_token=(api.token if api else os.getenv("EXTERNAL_API_TOKEN") or None),
+            api_login_id=(
+                api.login_id if api else os.getenv("EXTERNAL_API_LOGIN_ID") or None
+            ),
+            api_password=(
+                api.password if api else os.getenv("EXTERNAL_API_PASSWORD") or None
+            ),
             api_timeout=float(os.getenv("EXTERNAL_API_TIMEOUT", "10")),
             score_options=_split(os.getenv("DOCTOR_SCORE_OPTIONS"), DEFAULT_SCORE_OPTIONS),
             scale_stages=_split(os.getenv("SCALE_STAGE_OPTIONS"), DEFAULT_SCALE_STAGES),

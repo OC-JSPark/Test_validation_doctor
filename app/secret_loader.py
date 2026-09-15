@@ -67,6 +67,19 @@ class DatabaseUrls:
     session: str
 
 
+@dataclass(frozen=True)
+class ApiCredentials:
+    """외부 대화 API 인증 수단. 셋 다 없을 수도 있다(그 경우 조회가 401 로 실패)."""
+
+    login_id: str | None = None
+    password: str | None = None
+    token: str | None = None
+
+    @property
+    def is_usable(self) -> bool:
+        return bool(self.token or (self.login_id and self.password))
+
+
 def use_aws() -> bool:
     """AWS 에서 읽을지 여부.
 
@@ -190,6 +203,23 @@ def load_database_urls() -> DatabaseUrls:
         validation=build_dsn(host, port, validation_name, user, password),
         student=build_dsn(host, port, student_name, ro_user, ro_password),
         session=build_dsn(host, port, session_name, ro_user, ro_password),
+    )
+
+
+def load_api_credentials() -> ApiCredentials:
+    """SSM 에서 외부 대화 API 인증 수단을 가져온다.
+
+    DB 접속 정보와 달리 **없어도 앱은 뜬다.** 관리자 화면(할당·CSV)은 외부 API 를
+    쓰지 않으므로, 계정이 없다고 전체를 막으면 손해가 크다. 대신 전문의가 대화를
+    조회할 때 실패하고, `preflight` 가 배포 전에 미리 잡아낸다.
+
+    호출 전에 `use_aws()` 로 AWS 모드인지 확인할 것.
+    """
+    prefix = f"/aimie/{_env_name()}"
+    return ApiCredentials(
+        login_id=get_parameter_or(f"{prefix}/EXTERNAL_API_LOGIN_ID", "") or None,
+        password=get_parameter_or(f"{prefix}/EXTERNAL_API_PASSWORD", "") or None,
+        token=get_parameter_or(f"{prefix}/EXTERNAL_API_TOKEN", "") or None,
     )
 
 
