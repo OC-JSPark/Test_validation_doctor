@@ -172,7 +172,9 @@ def _render_evaluation(evaluation_set: EvaluationSet) -> None:
             f"· {assignment.chat_date or '(전체)'}"
         )
     st.markdown(f"**진행: {turn_index + 1} / {total} 턴**")
-    progress_bar(evaluation_set.filled_turns / total * 100)
+    # 진행률은 평가 대상 턴 기준이다. 레포트 턴까지 넣으면 100% 에 닿지 못한다.
+    evaluable = evaluation_set.evaluable_turns
+    progress_bar(evaluation_set.filled_turns / evaluable * 100 if evaluable else 0.0)
 
     if locked:
         st.success("최종 완료된 평가입니다 (수정 잠금).")
@@ -220,6 +222,13 @@ def _render_evaluation(evaluation_set: EvaluationSet) -> None:
         st.markdown("#### 👤 학생 답변")
         if (current.user_answer or "").strip():
             st.success(current.user_answer)
+        elif (current.ai_question or "").strip():
+            # 대화 끝의 분석 레포트처럼 질문이 아닌 턴이다. 평가 대상이 아니므로
+            # 채우지 않아도 [최종 완료] 가 막히지 않는다는 점을 알려 준다.
+            st.info(
+                "학생 답변이 없는 턴입니다 (대화 마지막의 분석 레포트 등). "
+                "**평가 대상이 아니므로 비워 두어도 최종 완료할 수 있습니다.**"
+            )
         else:
             st.warning("이 턴의 학생 답변이 외부 API 응답에 없습니다.")
 
@@ -301,6 +310,8 @@ def _render_evaluation(evaluation_set: EvaluationSet) -> None:
                 else:
                     st.rerun()
 
-    remaining = total - evaluation_set.filled_turns
+    remaining = evaluation_set.evaluable_turns - evaluation_set.filled_turns
     if remaining and not locked:
-        st.caption(f"미입력 턴 {remaining}개가 남아 있어 [최종 완료] 가 비활성화되어 있습니다.")
+        st.caption(
+            f"미입력 턴 {remaining}개가 남아 있어 [최종 완료] 가 비활성화되어 있습니다."
+        )
