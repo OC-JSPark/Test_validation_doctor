@@ -123,6 +123,9 @@ class ScaleSession:
     session_date: date
     stage: str | None = None  # AI 대화 엔진의 원본 stage 값 (stress / depression …)
     scale_stage: str | None = None  # 위 stage 를 척도명으로 옮긴 값
+    # 검사를 끝까지 마쳤는지. 분석 레포트가 생성됐으면 완료로 본다.
+    # 중간에 이탈한 세션은 평가할 대화가 부족하거나 아예 없다.
+    is_completed: bool = False
 
     @property
     def chat_date(self) -> str:

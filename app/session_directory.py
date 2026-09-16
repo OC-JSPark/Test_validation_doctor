@@ -31,12 +31,17 @@ _LIST_SQL = """
     SELECT s.user_id    AS student_id,
            s.session_id AS session_id,
            s.date       AS session_date,
-           c.checkpoint_json -> 'channel_values' ->> 'stage' AS stage
+           c.checkpoint_json -> 'channel_values' ->> 'stage' AS stage,
+           (r.session_id IS NOT NULL) AS is_completed
     FROM sessions s
     LEFT JOIN checkpoints c
            ON c.user_id = s.user_id
           AND c.date = s.date
           AND c.session_id = s.session_id
+    LEFT JOIN report r
+           ON r.user_id = s.user_id
+          AND r.date = s.date
+          AND r.session_id = s.session_id
     WHERE s.user_id = ANY(%s)
     ORDER BY s.user_id, s.date, s.session_id
 """
@@ -74,9 +79,19 @@ def close_pool() -> None:
 
 
 def list_sessions(
-    student_ids: list[str], conn: psycopg.Connection | None = None
+    student_ids: list[str],
+    conn: psycopg.Connection | None = None,
+    *,
+    completed_only: bool = True,
 ) -> list[ScaleSession]:
-    """여러 학생의 척도검사를 한 번에 조회한다 (학생당 쿼리를 돌리지 않는다)."""
+    """여러 학생의 척도검사를 한 번에 조회한다 (학생당 쿼리를 돌리지 않는다).
+
+    기본으로 **끝까지 마친 검사만** 돌려준다. 중간에 이탈한 세션은 평가할
+    대화가 부족하거나 아예 없어서, 할당하면 전문의 작업량만 늘고 어떤 건은
+    평가 대상 턴이 0개라 [최종 완료] 자체가 불가능하다.
+
+    `completed_only=False` 로 전체를 볼 수 있다 (관리자 화면의 선택지).
+    """
     ids = [s for s in dict.fromkeys(student_ids) if s]
     if not ids:
         return []
@@ -95,16 +110,20 @@ def list_sessions(
         ) from exc
 
     settings = get_settings()
-    return [
+    sessions = [
         ScaleSession(
             student_id=row["student_id"],
             session_id=row["session_id"],
             session_date=row["session_date"],
             stage=row.get("stage"),
             scale_stage=settings.scale_for_stage(row.get("stage")),
+            is_completed=bool(row.get("is_completed")),
         )
         for row in rows
     ]
+    if completed_only:
+        return [s for s in sessions if s.is_completed]
+    return sessions
 
 
 def group_by_student(sessions: list[ScaleSession]) -> dict[str, list[ScaleSession]]:

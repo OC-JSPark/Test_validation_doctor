@@ -74,10 +74,50 @@ def test_여러_학생을_한_번에_조회한다(session_conn):
     ).fetchall()
     ids = [r["user_id"] for r in rows]
 
-    sessions = list_sessions(ids, session_conn)
+    # 완료 필터와 무관하게 '한 번에 조회' 되는지가 관심사다
+    sessions = list_sessions(ids, session_conn, completed_only=False)
 
     assert {s.student_id for s in sessions} <= set(ids)
     assert len(group_by_student(sessions)) == len(ids)
+
+
+@pytest.mark.db
+def test_기본은_완료된_검사만_돌려준다(session_conn):
+    """중간에 이탈한 세션은 평가할 대화가 부족하거나 아예 없다.
+
+    특히 답변 0건인 세션을 할당하면 평가 대상 턴이 0개라
+    전문의가 [최종 완료] 를 영영 누를 수 없다.
+    """
+    rows = session_conn.execute(
+        "SELECT DISTINCT user_id FROM sessions LIMIT 5"
+    ).fetchall()
+    ids = [r["user_id"] for r in rows]
+
+    completed = list_sessions(ids, session_conn)
+    everything = list_sessions(ids, session_conn, completed_only=False)
+
+    assert len(completed) <= len(everything)
+    assert all(s.is_completed for s in completed)
+
+
+@pytest.mark.db
+def test_완료된_세션은_평가할_대화가_반드시_있다(session_conn):
+    """완료 판정(분석 레포트 존재)이 실제로 대화량을 보장하는지 확인한다."""
+    rows = session_conn.execute(
+        """
+        SELECT s.user_id, s.session_id,
+               COUNT(m.*) FILTER (WHERE m.role = 'user') AS answers
+        FROM sessions s
+        JOIN report r
+          ON r.user_id = s.user_id AND r.date = s.date AND r.session_id = s.session_id
+        LEFT JOIN chat_messages_vector m ON m.session_id = s.session_id
+        GROUP BY 1, 2
+        HAVING COUNT(m.*) FILTER (WHERE m.role = 'user') = 0
+        LIMIT 1
+        """
+    ).fetchone()
+
+    assert rows is None, "레포트가 있는데 학생 답변이 0건인 세션이 있다"
 
 
 @pytest.mark.db

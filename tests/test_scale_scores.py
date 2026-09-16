@@ -123,7 +123,8 @@ def test_실제_세션에_stage_와_척도가_붙는다(session_conn):
     if row is None:
         pytest.skip("stage='stress' 인 세션이 로컬 덤프에 없습니다.")
 
-    sessions = list_sessions([row["user_id"]], session_conn)
+    # 완료 여부와 무관하게 stage 가 실려 오는지가 관심사다
+    sessions = list_sessions([row["user_id"]], session_conn, completed_only=False)
     stressed = [s for s in sessions if s.stage == "stress"]
 
     assert stressed, "stage 가 실려 오지 않았습니다."
@@ -134,7 +135,7 @@ def test_실제_세션에_stage_와_척도가_붙는다(session_conn):
 def test_척도를_모르는_세션도_목록에_남는다(session_conn):
     """checkpoints 가 없거나 stage 가 opening 이어도 검사 자체는 할당 대상이다."""
     rows = session_conn.execute("SELECT DISTINCT user_id FROM sessions LIMIT 3").fetchall()
-    sessions = list_sessions([r["user_id"] for r in rows], session_conn)
+    sessions = list_sessions([r["user_id"] for r in rows], session_conn, completed_only=False)
 
     assert sessions
     # scale_stage 가 None 인 세션이 있어도 목록에서 빠지지 않는다
