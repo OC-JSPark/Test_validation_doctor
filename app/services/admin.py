@@ -14,8 +14,13 @@ from app.repositories import assignments as assignments_repo
 from app.repositories import evaluations as evaluations_repo
 from app.repositories import users as users_repo
 
+# 학생 ID·세션 ID·날짜는 원본 대화를 되짚기 위한 식별자다.
+# 같은 세션에서 나온 턴들은 이 세 값이 모두 같다 (턴마다 반복 출력된다).
 CSV_HEADERS = [
     "평가 ID",
+    "학생ID",
+    "세션ID",
+    "검사일자",
     "진단단계",
     "AI질문",
     "User Answer",
@@ -213,6 +218,9 @@ def export_csv(
         writer.writerow(
             [
                 row["evaluation_code"] or "",
+                row["student_id"] or "",
+                row["session_id"] or "",
+                row["chat_date"] or "",
                 row["scale_stage"] or "",
                 row["ai_question"] or "",
                 row["user_answer"] or "",
