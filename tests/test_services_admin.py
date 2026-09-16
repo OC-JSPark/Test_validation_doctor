@@ -319,15 +319,19 @@ def test_턴에_척도가_없으면_세션에서_판별한_척도로_채운다(c
     assignments_repo.mark_completed(conn, assignment.id)
 
     rows = _read_csv(admin_service.export_csv(conn))
-    row = next(r for r in rows[1:] if r[2] == "질문")
+    header = rows[0]
+    row = next(r for r in rows[1:] if r[header.index("AI질문")] == "질문")
 
-    assert row[1] == "1단계 PHQ-stress"
+    assert row[header.index("진단단계")] == "1단계 PHQ-stress"
 
 
 def test_CSV_헤더는_명세대로다(conn):
     rows = _read_csv(admin_service.export_csv(conn))
     assert rows[0] == [
         "평가 ID",
+        "학생ID",
+        "세션ID",
+        "검사일자",
         "진단단계",
         "AI질문",
         "User Answer",
@@ -336,6 +340,49 @@ def test_CSV_헤더는_명세대로다(conn):
         "담당전문의",
         "완료일시",
     ]
+
+
+def test_CSV_에_원본_대화_식별자가_실린다(conn, doctor):
+    """학생ID·세션ID·검사일자가 있어야 나중에 원본 대화를 되짚을 수 있다."""
+    assignment = assignments_repo.create_assignment(
+        conn, doctor.user_id, "stu-abc123", "sess-xyz789", "26.09.01"
+    )
+    evaluations_repo.sync_turns(conn, assignment.id, [QATurn(0, "질문", "답변")])
+    evaluations_repo.save_evaluation(
+        conn, assignment.id, 0, doctor_score="4점", doctor_opinion="사유"
+    )
+    assignments_repo.mark_completed(conn, assignment.id)
+
+    rows = _read_csv(admin_service.export_csv(conn))
+    header, row = rows[0], next(r for r in rows[1:] if r[5] == "질문")
+
+    assert row[header.index("학생ID")] == "stu-abc123"
+    assert row[header.index("세션ID")] == "sess-xyz789"
+    assert row[header.index("검사일자")] == "26.09.01"
+
+
+def test_같은_세션의_턴은_식별자가_모두_같다(conn, doctor):
+    """26.09.01 A학생 1세션이면 그 세션의 모든 턴에 같은 값이 나온다."""
+    assignment = assignments_repo.create_assignment(
+        conn, doctor.user_id, "stu-same", "sess-same", "26.09.01"
+    )
+    evaluations_repo.sync_turns(
+        conn, assignment.id, [QATurn(i, f"질문{i}", f"답변{i}") for i in range(3)]
+    )
+    for i in range(3):
+        evaluations_repo.save_evaluation(
+            conn, assignment.id, i, doctor_score="4점", doctor_opinion="사유"
+        )
+    assignments_repo.mark_completed(conn, assignment.id)
+
+    rows = _read_csv(admin_service.export_csv(conn))
+    header = rows[0]
+    mine = [r for r in rows[1:] if r[header.index("학생ID")] == "stu-same"]
+
+    assert len(mine) == 3  # 턴 3개
+    for column in ("학생ID", "세션ID", "검사일자"):
+        values = {r[header.index(column)] for r in mine}
+        assert len(values) == 1, f"{column} 이 턴마다 다르다: {values}"
 
 
 def test_CSV_는_엑셀_한글깨짐_방지_BOM_을_포함한다(conn):
@@ -360,11 +407,12 @@ def test_완료된_평가만_CSV_에_들어간다(conn, doctor):
 
     assignments_repo.mark_completed(conn, assignment.id)
     rows = _read_csv(admin_service.export_csv(conn))
-    row = next(r for r in rows[1:] if r[2] == "AI 질문")
+    header = rows[0]
+    row = next(r for r in rows[1:] if r[header.index("AI질문")] == "AI 질문")
 
-    assert row[1] == "1단계 PHQ-stress"
-    assert row[3] == "학생 답변"
-    assert row[4] == "Very (4점)"
-    assert row[5] == "수면 문제 호소"
-    assert row[6] == "테스트 전문의"
-    assert row[7]  # 완료일시가 채워져 있다
+    assert row[header.index("진단단계")] == "1단계 PHQ-stress"
+    assert row[header.index("User Answer")] == "학생 답변"
+    assert row[header.index("전문의점수/조치")] == "Very (4점)"
+    assert row[header.index("전문의판단이유")] == "수면 문제 호소"
+    assert row[header.index("담당전문의")] == "테스트 전문의"
+    assert row[header.index("완료일시")]  # 채워져 있다

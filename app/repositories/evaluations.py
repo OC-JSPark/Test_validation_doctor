@@ -142,6 +142,11 @@ def list_completed_rows(
     """
     sql = """
         SELECT e.evaluation_code,
+               -- 원본 대화를 되짚을 수 있도록 할당의 식별자를 함께 싣는다.
+               -- 같은 세션의 턴들은 아래 세 값이 모두 같다.
+               a.student_id,
+               a.session_id,
+               a.chat_date,
                COALESCE(NULLIF(TRIM(e.scale_stage), ''), a.scale_stage) AS scale_stage,
                e.ai_question,
                e.user_answer,
