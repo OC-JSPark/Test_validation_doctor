@@ -113,6 +113,9 @@ def refresh_progress(conn: psycopg.Connection, assignment_id: int) -> Assignment
     """완료 턴 수를 다시 세고 상태를 재계산한다.
 
     점수와 판단 이유가 모두 채워진 턴만 '완료'로 센다.
+    **학생 답변이 없는 턴은 세지 않는다** — 대화 끝의 분석 레포트처럼
+    전문의가 채울 것이 없는 턴이라, 세면 completed_turns 가 total_turns 를
+    넘어 진행률이 100% 를 넘는다.
     이미 COMPLETED 인 건은 상태를 건드리지 않는다 (수정 잠금 유지).
     """
     conn.execute(
@@ -129,6 +132,7 @@ def refresh_progress(conn: psycopg.Connection, assignment_id: int) -> Assignment
             SELECT COUNT(*) AS done
             FROM doctor_evaluations
             WHERE assignment_id = %s
+              AND COALESCE(TRIM(user_answer), '') <> ''
               AND COALESCE(TRIM(doctor_score), '') <> ''
               AND COALESCE(TRIM(doctor_opinion), '') <> ''
         ) AS sub

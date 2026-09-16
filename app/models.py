@@ -194,6 +194,16 @@ class Evaluation:
             (self.doctor_opinion or "").strip()
         )
 
+    @property
+    def is_evaluable(self) -> bool:
+        """평가 대상 턴인지. 학생 답변이 있어야 평가할 것이 있다.
+
+        대화 마지막에 AI 가 붙이는 분석 레포트(정신건강 점수·대화 요약·조언)는
+        질문이 아니라 결과물이라 학생 답변이 따라오지 않는다. 이걸 평가 대상으로
+        세면 전문의가 채울 수 없는 턴 때문에 [최종 완료] 가 영영 막힌다.
+        """
+        return bool((self.user_answer or "").strip())
+
 
 def build_evaluation_code(assignment_id: int, turn_index: int) -> str:
     """평가 ID 생성 (SPEC 예시 'KID-001' 형식을 턴 단위로 확장)."""

@@ -24,17 +24,31 @@ class EvaluationSet:
     evaluations: list[Evaluation]
 
     @property
+    def evaluable(self) -> list[Evaluation]:
+        """평가 대상 턴만. 학생 답변이 없는 턴(마지막 분석 레포트 등)은 뺀다."""
+        return [e for e in self.evaluations if e.is_evaluable]
+
+    @property
     def total_turns(self) -> int:
+        """화면에 보이는 전체 턴 수 (레포트 턴 포함)."""
         return len(self.evaluations)
 
     @property
+    def evaluable_turns(self) -> int:
+        """평가해야 하는 턴 수."""
+        return len(self.evaluable)
+
+    @property
     def filled_turns(self) -> int:
-        return sum(1 for e in self.evaluations if e.is_filled)
+        return sum(1 for e in self.evaluable if e.is_filled)
 
     @property
     def can_complete(self) -> bool:
-        """모든 턴의 점수/판단 이유가 채워져야 [최종 완료] 가 활성화된다."""
-        return self.total_turns > 0 and self.filled_turns == self.total_turns
+        """평가 대상 턴이 모두 채워져야 [최종 완료] 가 활성화된다.
+
+        학생 답변이 없는 턴은 전문의가 채울 것이 없으므로 요건에서 뺀다.
+        """
+        return self.evaluable_turns > 0 and self.filled_turns == self.evaluable_turns
 
 
 def list_my_assignments(conn: psycopg.Connection, doctor_id: str) -> list[Assignment]:
@@ -66,7 +80,10 @@ def load_evaluation_set(
         )
         if turns:
             evaluations_repo.sync_turns(conn, assignment_id, turns)
-            assignments_repo.update_total_turns(conn, assignment_id, len(turns))
+            # 학생 답변이 있는 턴만 센다. 레포트 턴까지 세면 진행률이
+            # 100% 에 닿지 못해 [최종 완료] 가 영영 열리지 않는다.
+            evaluable = sum(1 for t in turns if (t.user_answer or "").strip())
+            assignments_repo.update_total_turns(conn, assignment_id, evaluable)
 
     assignment = assignments_repo.refresh_progress(conn, assignment_id) or assignment
     return EvaluationSet(
@@ -110,7 +127,8 @@ def save_turn(
 def complete_assignment(conn: psycopg.Connection, assignment_id: int) -> Assignment:
     """PATCH /api/doctor/assignments/{assignmentId}/complete
 
-    모든 턴이 채워지지 않았으면 거부한다 (UI 버튼 비활성화의 서버측 방어선).
+    평가 대상 턴이 모두 채워지지 않았으면 거부한다
+    (UI 버튼 비활성화의 서버측 방어선).
     """
     assignment = assignments_repo.refresh_progress(conn, assignment_id)
     if assignment is None:
@@ -120,7 +138,14 @@ def complete_assignment(conn: psycopg.Connection, assignment_id: int) -> Assignm
     if not evaluations:
         raise ValueError("평가할 턴이 없습니다. 대화 내용을 먼저 불러오세요.")
 
-    unfilled = [e.turn_index for e in evaluations if not e.is_filled]
+    # 학생 답변이 없는 턴(마지막 분석 레포트 등)은 채울 것이 없어 요건에서 뺀다.
+    evaluable = [e for e in evaluations if e.is_evaluable]
+    if not evaluable:
+        raise ValueError(
+            "평가할 수 있는 턴이 없습니다. 학생 답변이 있는 턴이 하나도 없습니다."
+        )
+
+    unfilled = [e.turn_index for e in evaluable if not e.is_filled]
     if unfilled:
         preview = ", ".join(str(i + 1) for i in unfilled[:5])
         raise ValueError(f"아직 입력되지 않은 턴이 있습니다 (턴 {preview} ...).")

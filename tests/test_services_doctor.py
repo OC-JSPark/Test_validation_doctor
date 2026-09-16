@@ -4,13 +4,24 @@ from __future__ import annotations
 
 import pytest
 
-from app.models import STATUS_COMPLETED, STATUS_IN_PROGRESS
+from app.models import STATUS_COMPLETED, STATUS_IN_PROGRESS, QATurn
 from app.repositories import assignments as assignments_repo
 from app.repositories import evaluations as evaluations_repo
 from app.services import doctor as doctor_service
 from app.services.doctor import AssignmentLocked
 
 pytestmark = pytest.mark.db
+
+
+class _FakeTurns:
+    """지정한 턴을 그대로 돌려주는 가짜 API 클라이언트."""
+
+    def __init__(self, turns):
+        self._turns = list(turns)
+
+    def fetch_turns(self, student_id, *, date=None, session_id=None):
+        return list(self._turns)
+
 
 
 @pytest.fixture
@@ -128,6 +139,72 @@ def test_can_complete_는_모든_턴이_채워져야_True(conn, assignment, fake
 
 
 # --- 최종 완료 및 잠금 ------------------------------------------------------
+
+
+def test_학생_답변이_없는_턴은_평가_대상이_아니다(conn, assignment):
+    """대화 끝에 AI 가 붙이는 분석 레포트(정신건강 점수·요약·조언)는
+    질문이 아니라 결과물이라 학생 답변이 없다. 이걸 평가 대상으로 세면
+    전문의가 채울 수 없는 턴 때문에 최종 완료가 영영 막힌다."""
+    turns = [QATurn(0, "질문1", "답변1"), QATurn(1, "질문2", "답변2")]
+    turns.append(QATurn(2, "1. 정신건강 점수 분석 …", ""))  # 레포트 턴
+    evaluations_repo.sync_turns(conn, assignment.id, turns)
+
+    es = doctor_service.load_evaluation_set(
+        conn, assignment.id, _FakeTurns(turns), refresh=True
+    )
+
+    assert es.total_turns == 3          # 화면에는 3턴 다 보인다
+    assert es.evaluable_turns == 2      # 평가해야 하는 건 2턴
+    assert es.assignment.total_turns == 2
+
+
+def test_레포트_턴을_비워도_최종완료된다(conn, assignment):
+    """실제 dev 배포에서 막힌 건 — 21턴 중 마지막이 레포트라 완료가 안 됐다."""
+    turns = [
+        QATurn(0, "질문1", "답변1"),
+        QATurn(1, "질문2", "답변2"),
+        QATurn(2, "1. 정신건강 점수 분석 …", ""),
+    ]
+    client = _FakeTurns(turns)
+    doctor_service.load_evaluation_set(conn, assignment.id, client)
+
+    # 평가 대상 2턴만 채운다. 레포트 턴(2)은 손대지 않는다.
+    for i in (0, 1):
+        doctor_service.save_turn(
+            conn, assignment.id, i, doctor_score="4점", doctor_opinion="사유"
+        )
+
+    es = doctor_service.load_evaluation_set(conn, assignment.id, client, refresh=False)
+    assert es.can_complete is True
+    assert es.assignment.progress_pct == 100.0
+
+    done = doctor_service.complete_assignment(conn, assignment.id)
+    assert done.status == STATUS_COMPLETED
+
+
+def test_레포트_턴을_채워도_진행률이_넘치지_않는다(conn, assignment):
+    """전문의가 레포트 턴에도 점수를 넣을 수 있다. 세면 100% 를 넘는다."""
+    turns = [QATurn(0, "질문1", "답변1"), QATurn(2, "레포트", "")]
+    client = _FakeTurns(turns)
+    doctor_service.load_evaluation_set(conn, assignment.id, client)
+
+    for e in doctor_service.load_evaluation_set(
+        conn, assignment.id, client, refresh=False
+    ).evaluations:
+        doctor_service.save_turn(
+            conn, assignment.id, e.turn_index, doctor_score="4점", doctor_opinion="사유"
+        )
+
+    updated = assignments_repo.get_assignment(conn, assignment.id)
+    assert updated.completed_turns == 1        # 레포트 턴은 세지 않는다
+    assert updated.progress_pct == 100.0       # 100% 를 넘지 않는다
+
+
+def test_평가할_수_있는_턴이_하나도_없으면_완료_불가(conn, assignment):
+    evaluations_repo.sync_turns(conn, assignment.id, [QATurn(0, "레포트만", "")])
+
+    with pytest.raises(ValueError, match="평가할 수 있는 턴이 없습니다"):
+        doctor_service.complete_assignment(conn, assignment.id)
 
 
 def test_미입력_턴이_있으면_최종완료가_거부된다(conn, assignment, fake_client):
