@@ -294,15 +294,41 @@ def _render_assign() -> None:
 
     # 학생을 고르면 그 학생이 실시한 척도검사가 전부 할당 대상이 된다.
     # 관리자가 날짜를 따로 입력하지 않는다.
+    include_incomplete = st.checkbox(
+        "중간에 이탈한 검사도 할당",
+        key="admin_include_incomplete",
+        help="기본은 분석 레포트까지 생성된 '완료' 검사만 할당합니다. "
+        "이탈한 검사는 평가할 대화가 부족하고, 답변이 아예 없으면 "
+        "전문의가 [최종 완료] 를 누를 수 없습니다.",
+    )
+
     targets: list[tuple[str, str, str]] = []
     if selected_students:
         try:
-            sessions = session_directory.list_sessions(selected_students)
+            sessions = session_directory.list_sessions(
+                selected_students, completed_only=not include_incomplete
+            )
+            # 몇 건이 걸러졌는지 알려주기 위해 전체도 센다.
+            all_sessions = (
+                sessions
+                if include_incomplete
+                else session_directory.list_sessions(
+                    selected_students, completed_only=False
+                )
+            )
         except SessionDirectoryError as exc:
             st.error(str(exc))
             return
         targets = admin_service.build_targets(sessions)
         _render_session_summary(selected_students, sessions)
+
+        excluded = len(all_sessions) - len(sessions)
+        if excluded:
+            st.info(
+                f"미완료 검사 **{excluded}건**을 제외했습니다 "
+                f"(전체 {len(all_sessions)}건 중 완료 {len(sessions)}건). "
+                "포함하려면 위 체크박스를 켜세요."
+            )
 
     st.caption(f"생성될 작업: **{len(targets)}건**")
 
