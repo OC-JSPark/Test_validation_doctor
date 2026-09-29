@@ -16,6 +16,48 @@ class AssignmentLocked(RuntimeError):
     """최종 완료된 할당은 수정할 수 없다."""
 
 
+# 선택된 행 맨 앞에 붙는 마커. 배경색이 안 먹는 환경(복사·붙여넣기, 흑백 출력)
+# 에서도 어느 행이 열려 있는지 알 수 있도록 글자로도 표시한다.
+SELECTED_MARKER = "▶"
+
+
+def resolve_selection(assignments: list[Assignment], previous: int | None) -> int | None:
+    """작업 목록에서 실제로 열려 있는 할당 ID.
+
+    표를 그리는 시점에는 selectbox 가 아직 그려지지 않아 세션 상태만으로는
+    선택을 알 수 없다. selectbox 와 **같은 규칙**으로 미리 확정해야
+    강조된 행과 실제로 열린 작업이 어긋나지 않는다.
+
+    이전 선택이 목록에 없으면(할당이 삭제된 경우 등) 첫 번째로 되돌린다.
+    """
+    ids = [a.id for a in assignments]
+    if not ids:
+        return None
+    return previous if previous in ids else ids[0]
+
+
+def build_todo_rows(
+    assignments: list[Assignment], selected_id: int | None
+) -> list[dict]:
+    """작업 목록 표의 행. 선택된 건 맨 앞에 마커를 단다.
+
+    표시용 변환(빈 값 → `(전체)`)만 하고 Streamlit 에 의존하지 않는다.
+    """
+    return [
+        {
+            "": SELECTED_MARKER if a.id == selected_id else "",
+            "ID": a.id,
+            "학생 ID": a.student_id,
+            "세션 ID": a.session_id or "(전체)",
+            "날짜": a.chat_date or "(전체)",
+            "진행": f"{a.completed_turns}/{a.total_turns}",
+            "진행률(%)": a.progress_pct,
+            "상태": a.status,
+        }
+        for a in assignments
+    ]
+
+
 @dataclass
 class EvaluationSet:
     """한 세션의 전체 턴 + 평가 데이터."""

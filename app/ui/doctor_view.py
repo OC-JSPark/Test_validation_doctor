@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pandas as pd
 import streamlit as st
 
 from app.config import get_settings
@@ -13,6 +14,9 @@ from app.ui.common import chat_client, connection, progress_bar
 
 _SELECTED_KEY = "doctor_selected_assignment"
 _TURN_KEY = "doctor_turn_index"
+# selectbox 의 위젯 키. 키를 주면 위젯 값이 스크립트 본문보다 **먼저** 세션에
+# 복원되므로, 위젯보다 위에 있는 표에서도 현재 선택을 알 수 있다.
+_PICKER_KEY = "doctor_assignment_picker"
 
 
 def render(user: User) -> None:
@@ -24,8 +28,7 @@ def render(user: User) -> None:
         st.info("할당된 작업이 없습니다. 관리자에게 문의하세요.")
         return
 
-    _render_todo_list(assignments)
-    selected_id = st.session_state.get(_SELECTED_KEY)
+    selected_id = _render_todo_list(assignments)
     if selected_id is None:
         st.caption("위 목록에서 작업을 선택하면 평가 화면이 열립니다.")
         return
@@ -39,40 +42,64 @@ def render(user: User) -> None:
 # --- 작업 목록 -------------------------------------------------------------
 
 
-def _render_todo_list(assignments: list[Assignment]) -> None:
+def _highlight_selected(rows: list[dict], selected_row: int | None):
+    """선택된 행에 배경색·굵은 글씨를 입힌 Styler 를 만든다.
+
+    테마(라이트/다크)를 타지 않도록 불투명 색 대신 반투명 노랑을 깔아
+    어느 배경 위에서도 대비가 남게 한다.
+
+    Styler 를 쓰면 숫자 열이 기본 부동소수 서식(`0.000000`)으로 나오므로
+    진행률은 소수 한 자리로 직접 지정한다.
+    """
+    styler = pd.DataFrame(rows).style.format({"진행률(%)": "{:.1f}"})
+    if selected_row is None:
+        return styler
+
+    def _style(row: pd.Series) -> list[str]:
+        if row.name != selected_row:
+            return [""] * len(row)
+        return ["background-color: rgba(255, 184, 0, 0.28); font-weight: 700"] * len(row)
+
+    return styler.apply(_style, axis=1)
+
+
+def _render_todo_list(assignments: list[Assignment]) -> int | None:
     st.subheader("나의 작업 목록")
+
+    # 표가 selectbox 보다 위에 있으므로, 표를 그리기 전에 선택을 확정해야 한다.
+    # 확정하지 않으면 강조가 한 박자 늦어 방금 고른 행이 아니라 직전 행에 색이 남는다.
+    options = [a.id for a in assignments]
+    selected_id = doctor_service.resolve_selection(
+        assignments, st.session_state.get(_PICKER_KEY)
+    )
+    if st.session_state.get(_PICKER_KEY) != selected_id:
+        # 할당이 삭제돼 세션에 남은 ID 가 목록에 없는 경우.
+        # 위젯이 아직 만들어지기 전이라 여기서는 세션 상태를 고칠 수 있다.
+        st.session_state[_PICKER_KEY] = selected_id
+
     st.dataframe(
-        [
-            {
-                "ID": a.id,
-                "학생 ID": a.student_id,
-                "세션 ID": a.session_id or "(전체)",
-                "날짜": a.chat_date or "(전체)",
-                "진행": f"{a.completed_turns}/{a.total_turns}",
-                "진행률(%)": a.progress_pct,
-                "상태": a.status,
-            }
-            for a in assignments
-        ],
+        _highlight_selected(
+            doctor_service.build_todo_rows(assignments, selected_id),
+            options.index(selected_id) if selected_id in options else None,
+        ),
         width="stretch",
         hide_index=True,
     )
 
-    options = [a.id for a in assignments]
     labels = {
         a.id: f"#{a.id} · {a.student_id[:12]}… · {a.status} ({a.completed_turns}/{a.total_turns})"
         for a in assignments
     }
-    previous = st.session_state.get(_SELECTED_KEY)
     selected = st.selectbox(
         "평가할 작업 선택",
         options,
-        index=options.index(previous) if previous in options else 0,
+        key=_PICKER_KEY,
         format_func=lambda aid: labels[aid],
     )
-    if selected != previous:
+    if selected != st.session_state.get(_SELECTED_KEY):
         st.session_state[_SELECTED_KEY] = selected
         st.session_state[_TURN_KEY] = 0
+    return selected
 
 
 # --- 데이터 로딩 -----------------------------------------------------------

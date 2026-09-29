@@ -20,6 +20,7 @@ from app.models import ROLE_ADMIN, ROLE_DOCTOR, QATurn
 from app.repositories import assignments as assignments_repo
 from app.repositories import evaluations as evaluations_repo
 from app.repositories import users as users_repo
+from app.services.doctor import SELECTED_MARKER
 
 pytestmark = pytest.mark.db
 
@@ -122,6 +123,29 @@ def test_할당이_있으면_평가_화면이_열린다(committed_conn, ui_docto
     assert not at.exception
     assert any("진행: 1 / 3 턴" in md.value for md in at.markdown)
     assert any("AI 질문" in md.value for md in at.markdown)
+
+
+def test_선택한_작업이_목록에서_강조된다(committed_conn, ui_doctor):
+    """목록이 길어져도 지금 평가 중인 건이 어느 행인지 보여야 한다."""
+    conn, _ = committed_conn
+    first = assignments_repo.create_assignment(conn, ui_doctor, "stu-a", "sess-a", "26.08.31")
+    second = assignments_repo.create_assignment(conn, ui_doctor, "stu-b", "sess-b", "26.09.01")
+
+    at = _login(ui_doctor, "pw1234")
+    assert not at.exception
+
+    ids = list(at.dataframe[0].value["ID"])
+    markers = list(at.dataframe[0].value[""])
+    # 아무것도 고르지 않았으면 selectbox 기본값(첫 번째)이 강조된다
+    assert markers[ids.index(first.id)] == SELECTED_MARKER
+    assert markers[ids.index(second.id)] == ""
+
+    at.selectbox[0].select(second.id).run()
+
+    ids = list(at.dataframe[0].value["ID"])
+    markers = list(at.dataframe[0].value[""])
+    assert markers[ids.index(second.id)] == SELECTED_MARKER
+    assert markers[ids.index(first.id)] == ""
 
 
 def test_최종완료_버튼은_미입력_턴이_있으면_비활성(committed_conn, ui_doctor):
