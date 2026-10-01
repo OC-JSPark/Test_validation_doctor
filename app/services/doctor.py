@@ -98,6 +98,36 @@ def list_my_assignments(conn: psycopg.Connection, doctor_id: str) -> list[Assign
     return assignments_repo.list_assignments(conn, doctor_id=doctor_id)
 
 
+def resolve_ai_dates(
+    conn: psycopg.Connection, assignment: Assignment, client: ChatAPIClient
+) -> Assignment:
+    """AI 테스트 할당의 조회 날짜를 `latest-date` API 로 확정한다.
+
+    AI 테스트 데이터는 척도검사 목록 API 가 없어 관리자가 날짜를 고를 수 없다.
+    그래서 할당은 날짜 없이 만들어지고, 전문의가 열 때 여기서 최신 날짜를 받는다.
+
+    **이 과정은 전문의에게 드러나지 않는다.** 평가자가 "AI 가 만든 데이터"라고
+    알면 판단이 달라질 수 있어, 화면은 일반 할당과 똑같이 보여야 한다.
+    날짜를 할당에 적어 두는 것도 그래서다 — 다음부터는 일반 할당과 구별할
+    근거가 화면에 남지 않는다.
+
+    적어 두면 CSV 추출의 '검사일자' 도 빈칸으로 남지 않는다.
+    이미 날짜가 있는 할당은 덮어쓰지 않는다 (평가와 날짜가 어긋나면 안 된다).
+
+    실제 사용자 데이터 할당은 그대로 돌려준다 — API 를 부르지 않는다.
+    """
+    if not assignment.is_ai_preview:
+        return assignment
+
+    dates = client.fetch_ai_latest_date(assignment.student_id)
+    if dates.chat_date_param and not assignment.chat_date:
+        assignment = (
+            assignments_repo.set_chat_date(conn, assignment.id, dates.chat_date_param)
+            or assignment
+        )
+    return assignment
+
+
 def load_evaluation_set(
     conn: psycopg.Connection,
     assignment_id: int,
@@ -109,12 +139,17 @@ def load_evaluation_set(
 
     `refresh=True` 면 외부 API 에서 대화를 다시 가져와 턴을 동기화한다.
     이미 저장된 전문의 입력은 유지된다.
+
+    AI 테스트 할당이면 대화를 가져오기 **전에** 최신 날짜를 먼저 확정한다
+    (날짜 없이 조회하면 어느 날짜 대화가 올지 보장되지 않는다).
+    전문의 화면은 그 차이를 드러내지 않는다 — `resolve_ai_dates` 참고.
     """
     assignment = assignments_repo.get_assignment(conn, assignment_id)
     if assignment is None:
         raise ValueError(f"할당을 찾을 수 없습니다: {assignment_id}")
 
     if refresh:
+        assignment = resolve_ai_dates(conn, assignment, client)
         turns = client.fetch_turns(
             assignment.student_id,
             date=assignment.chat_date or None,

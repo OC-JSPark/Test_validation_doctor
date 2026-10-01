@@ -39,6 +39,14 @@ STATUS_PENDING = "PENDING"
 STATUS_IN_PROGRESS = "IN_PROGRESS"
 STATUS_COMPLETED = "COMPLETED"
 
+# 할당의 데이터 출처.
+#   SERVICE    — 실제 사용자 데이터. 학생 명부 DB + 척도검사 DB 에서 고른다.
+#   AI_PREVIEW — AI DB 에만 있는 테스트용 생성 데이터.
+#                세션 목록 API 가 없어 날짜를 미리 알 수 없고, 전문의가 열 때
+#                `/api-kids/dev/ai-preview/latest-date` 로 최신 날짜를 받아 쓴다.
+SOURCE_SERVICE = "SERVICE"
+SOURCE_AI_PREVIEW = "AI_PREVIEW"
+
 
 @dataclass(frozen=True)
 class User:
@@ -112,6 +120,101 @@ class Student:
 
 
 @dataclass(frozen=True)
+class AIStudent:
+    """AI DB 에만 있는 테스트용 학생 1명.
+
+    `GET /api-kids/dev/ai-preview/students` 응답 한 건에 대응한다.
+
+    이 API 는 실제 사용자가 아니라 AI 가 만든 데이터라서 `name` 이 해시값이거나
+    `loginId` 가 `null` 인 경우가 많다. 그대로 목록에 띄우면 일반 학생과
+    구분이 안 되므로, 표시용 일련번호(`[AIuser01]`)를 붙여 쓴다.
+    번호는 API 가 준 `id` 순서로 매겨 다시 불러와도 같은 학생이 같은 번호를 받는다.
+    """
+
+    student_id: str  # studentId (= AI DB 의 user_id). 할당에 저장되는 값
+    seq: int  # 화면 표시용 일련번호 (1부터)
+    source_id: int | None = None  # API 응답의 id. 번호를 매기는 기준
+    name: str | None = None
+    login_id: str | None = None
+    grade: int | None = None
+    class_name: str | None = None
+    level: int | None = None
+    level_text: str | None = None
+
+    @property
+    def tag(self) -> str:
+        """말머리. 두 자리로 맞추되 100명이 넘으면 자릿수를 늘린다."""
+        return f"[AIuser{self.seq:02d}]"
+
+    @property
+    def display_name(self) -> str:
+        """사람이 읽을 이름. 해시값이면 앞자리만 잘라 쓴다.
+
+        이 API 의 `name` 은 studentId 와 같은 해시가 그대로 오는 경우가 많다.
+        전체를 늘어놓으면 목록이 해시로 도배되므로 그때는 이름으로 취급하지 않는다.
+        """
+        name = (self.name or "").strip()
+        if name and name != self.student_id:
+            return name
+        login_id = (self.login_id or "").strip()
+        if login_id:
+            return login_id
+        return f"{self.student_id[:8]}…"
+
+    @property
+    def label(self) -> str:
+        """체크박스·선택 목록에 표시할 문자열.
+
+        말머리를 **맨 앞**에 두어 정렬·검색 모두에서 일반 학생과 갈린다.
+        """
+        parts = [f"{self.tag} {self.display_name}"]
+        if self.level_text:
+            parts.append(self.level_text)
+        if self.grade:
+            grade = f"{self.grade}학년"
+            if self.class_name:
+                grade += f" {self.class_name}반"
+            parts.append(grade)
+        return " · ".join(parts)
+
+    def matches(self, query: str) -> bool:
+        """검색어가 말머리/이름/ID 중 하나에 들어 있으면 True.
+
+        `AIuser03` 이나 `03` 으로도 찾을 수 있어야 한다.
+        """
+        needle = query.strip().lower()
+        if not needle:
+            return True
+        haystack = " ".join(
+            str(v).lower()
+            for v in (self.tag, self.student_id, self.name, self.login_id, self.level_text)
+            if v
+        )
+        return needle in haystack
+
+
+@dataclass(frozen=True)
+class AIPreviewDates:
+    """AI 테스트 학생의 최신 데이터 날짜.
+
+    `GET /api-kids/dev/ai-preview/latest-date` 응답(`date`/`reportDate`/`chatDate`).
+    원본은 `YYYY-MM-DD` 인데, 대화 조회 API 는 `YY.MM.DD` 를 받으므로 변환해 쓴다.
+    """
+
+    chat_date: date | None = None
+    report_date: date | None = None
+
+    @property
+    def chat_date_param(self) -> str:
+        """대화 조회 API 에 넘길 날짜 (YY.MM.DD). 없으면 빈 문자열."""
+        return self.chat_date.strftime("%y.%m.%d") if self.chat_date else ""
+
+    @property
+    def is_empty(self) -> bool:
+        return self.chat_date is None and self.report_date is None
+
+
+@dataclass(frozen=True)
 class ScaleSession:
     """학생이 실시한 척도검사 1건 (= 하루톡 대화 1세션).
 
@@ -162,10 +265,19 @@ class Assignment:
     updated_at: datetime | None = None
     completed_at: datetime | None = None
     doctor_name: str | None = None
+    source: str = SOURCE_SERVICE  # SERVICE | AI_PREVIEW
 
     @property
     def is_completed(self) -> bool:
         return self.status == STATUS_COMPLETED
+
+    @property
+    def is_ai_preview(self) -> bool:
+        """AI 가 만든 테스트용 데이터인지.
+
+        전문의 화면은 이 값을 보고 날짜를 `latest-date` API 로 채운다.
+        """
+        return self.source == SOURCE_AI_PREVIEW
 
     @property
     def progress_pct(self) -> float:

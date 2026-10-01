@@ -7,12 +7,20 @@ from datetime import datetime
 import streamlit as st
 
 from app import session_directory, student_directory
-from app.models import Assignment, ScaleSession, User
+from app.external_api import ExternalAPIError
+from app.models import (
+    SOURCE_AI_PREVIEW,
+    SOURCE_SERVICE,
+    AIStudent,
+    Assignment,
+    ScaleSession,
+    User,
+)
 from app.repositories import users as users_repo
 from app.services import admin as admin_service
 from app.session_directory import SessionDirectoryError
 from app.student_directory import StudentDirectoryError
-from app.ui.common import connection, progress_bar
+from app.ui.common import chat_client, connection, progress_bar
 
 _SELECTED_STUDENTS_KEY = "admin_selected_students"
 _FLASH_KEY = "admin_flash"
@@ -107,10 +115,12 @@ def _render_assignment_table(assignments: list[Assignment]) -> None:
         [
             {
                 "ID": a.id,
+                # 실제 사용자 데이터와 AI 테스트 데이터를 한눈에 가른다.
+                "출처": "🤖 AI" if a.is_ai_preview else "👤 실사용",
                 "전문의": a.doctor_name,
                 "학생 ID": a.student_id,
                 "세션 ID": a.session_id or "(전체)",
-                "날짜": a.chat_date or "(전체)",
+                "날짜": a.chat_date or "(미설정)",
                 "진행": f"{a.completed_turns}/{a.total_turns}",
                 "진행률(%)": a.progress_pct,
                 "상태": a.status,
@@ -271,6 +281,63 @@ def _render_student_picker() -> list[str]:
     return [s.student_id for s in students if s.student_id in selected]
 
 
+@st.cache_data(ttl=300, show_spinner="AI 테스트 학생 목록을 불러오는 중…")
+def _load_ai_students(mode: str) -> list[AIStudent]:
+    """AI 테스트용 학생 목록 (외부 API).
+
+    매 상호작용마다 스크립트가 재실행되므로 캐시하지 않으면 체크 하나에
+    API 를 다시 부른다. 목록은 자주 바뀌지 않아 5분 TTL 로 둔다.
+    """
+    return chat_client().fetch_ai_students(mode=mode)
+
+
+def _render_ai_student_picker() -> list[AIStudent]:
+    """AI 테스트용 학생 선택.
+
+    이 목록은 이름이 해시값이거나 loginId 가 null 이라 사람이 식별할 수 없다.
+    그래서 `[AIuser01]` 말머리를 붙여 일반 학생과 헷갈리지 않게 한다
+    (번호는 API 의 id 순서라 다시 불러와도 같은 학생이 같은 번호를 받는다).
+    """
+    mode = st.radio(
+        "조회 범위",
+        ["all", "risk"],
+        format_func=lambda m: {"all": "전체", "risk": "위험군만"}[m],
+        horizontal=True,
+        key="admin_ai_mode",
+    )
+
+    col_reload, col_info = st.columns([1, 3])
+    if col_reload.button("🔄 목록 새로고침", width="stretch"):
+        _load_ai_students.clear()
+        st.rerun()
+
+    try:
+        students = _load_ai_students(mode)
+    except ExternalAPIError as exc:
+        st.error(f"AI 테스트 학생 목록을 가져오지 못했습니다: {exc}")
+        st.caption(
+            "dev 전용 엔드포인트입니다. EXTERNAL_API_BASE_URL 이 dev 환경을 "
+            "가리키는지, 계정에 조회 권한이 있는지 확인하세요."
+        )
+        return []
+
+    if not students:
+        st.warning("AI 테스트용 학생이 없습니다.")
+        return []
+
+    col_info.markdown(f"전체 **{len(students)}명**")
+
+    by_id = {s.student_id: s for s in students}
+    selected_ids = st.multiselect(
+        "AI 테스트 학생 선택",
+        list(by_id),
+        format_func=lambda sid: by_id[sid].label,
+        key="admin_ai_selected",
+        placeholder="말머리([AIuser01]) · 학생 ID 로 검색할 수 있습니다",
+    )
+    return [by_id[sid] for sid in selected_ids]
+
+
 def _render_assign() -> None:
     st.subheader("평가 작업 할당")
 
@@ -289,6 +356,56 @@ def _render_assign() -> None:
         ),
     )
 
+    # 두 경로는 데이터 출처도, 날짜를 정하는 방식도 다르다.
+    # 섞어서 고르면 혼동만 커지므로 한 번에 한쪽만 고르게 한다.
+    source = st.radio(
+        "데이터 출처",
+        [SOURCE_SERVICE, SOURCE_AI_PREVIEW],
+        format_func=lambda s: {
+            SOURCE_SERVICE: "👤 실제 사용자 데이터",
+            SOURCE_AI_PREVIEW: "🤖 AI 테스트 데이터",
+        }[s],
+        horizontal=True,
+        key="admin_assign_source",
+    )
+
+    if source == SOURCE_AI_PREVIEW:
+        _render_ai_assign(doctor_id)
+    else:
+        _render_service_assign(doctor_id)
+
+
+def _render_ai_assign(doctor_id: str) -> None:
+    """AI DB 에만 있는 테스트용 데이터 할당."""
+    st.caption(
+        "AI 가 만든 테스트용 데이터입니다. 실제 사용자 명부에는 없습니다. "
+        "검사 날짜는 전문의가 평가를 열 때 최신 날짜로 자동 설정됩니다."
+    )
+
+    st.markdown("#### 학생 선택")
+    students = _render_ai_student_picker()
+    targets = admin_service.build_ai_targets(students)
+
+    if students:
+        st.dataframe(
+            [
+                {
+                    "표시 번호": s.tag,
+                    "학생 ID": s.student_id,
+                    "단계": s.level_text or "-",
+                }
+                for s in students
+            ],
+            width="stretch",
+            hide_index=True,
+        )
+
+    st.caption(f"생성될 작업: **{len(targets)}건** (학생 1명당 1건)")
+    _render_create_button(doctor_id, targets, key="admin_create_ai")
+
+
+def _render_service_assign(doctor_id: str) -> None:
+    """실제 사용자 데이터 할당 (기존 흐름)."""
     st.markdown("#### 학생 선택")
     selected_students = _render_student_picker()
 
@@ -302,7 +419,7 @@ def _render_assign() -> None:
         "전문의가 [최종 완료] 를 누를 수 없습니다.",
     )
 
-    targets: list[tuple[str, str, str]] = []
+    targets: list[admin_service.AssignmentTarget] = []
     if selected_students:
         try:
             sessions = session_directory.list_sessions(
@@ -331,8 +448,13 @@ def _render_assign() -> None:
             )
 
     st.caption(f"생성될 작업: **{len(targets)}건**")
+    _render_create_button(doctor_id, targets, key="admin_create_service")
 
-    if st.button("작업 생성", type="primary", disabled=not targets):
+
+def _render_create_button(
+    doctor_id: str, targets: list[admin_service.AssignmentTarget], *, key: str
+) -> None:
+    if st.button("작업 생성", type="primary", disabled=not targets, key=key):
         with connection() as conn:
             created, skipped = admin_service.create_assignments(conn, doctor_id, targets)
         # rerun 이 화면을 다시 그리므로, 결과는 세션에 담아 다음 실행에서 보여준다.

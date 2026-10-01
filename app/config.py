@@ -31,6 +31,13 @@ DEFAULT_API_BASE_URL = "https://admin-dev.aimie-m.com"
 DEFAULT_LOGIN_PATH = "/api-kids/adm/login"
 DEFAULT_CHAT_PATH = "/api-kids/risk-students/student/chat"
 
+# AI 테스트 데이터 조회 경로 (API 정의서 4.n.n "AI 데이터 확인").
+# AI DB 에만 있는 생성 데이터를 보기 위한 dev 전용 엔드포인트다.
+# 대화(하루톡) 조회는 실제 데이터와 똑같이 DEFAULT_CHAT_PATH 를 쓴다.
+DEFAULT_AI_STUDENTS_PATH = "/api-kids/dev/ai-preview/students"
+DEFAULT_AI_LATEST_DATE_PATH = "/api-kids/dev/ai-preview/latest-date"
+DEFAULT_AI_REPORT_PATH = "/api-kids/dev/ai-preview/report"
+
 # 전문의 점수/조치 기본 선택지. .env 의 DOCTOR_SCORE_OPTIONS 로 덮어쓴다.
 DEFAULT_SCORE_OPTIONS = (
     "Not at all (0점)",
@@ -99,6 +106,9 @@ class Settings:
     api_login_path: str = DEFAULT_LOGIN_PATH
     api_chat_path: str = DEFAULT_CHAT_PATH
     api_login_type: str = "TEACHER"
+    api_ai_students_path: str = DEFAULT_AI_STUDENTS_PATH
+    api_ai_latest_date_path: str = DEFAULT_AI_LATEST_DATE_PATH
+    api_ai_report_path: str = DEFAULT_AI_REPORT_PATH
     scale_score_options: dict[str, tuple[str, ...]] = field(
         default_factory=lambda: dict(SCALE_SCORE_OPTIONS)
     )
@@ -164,6 +174,16 @@ class Settings:
             api_login_path=os.getenv("EXTERNAL_API_LOGIN_PATH") or DEFAULT_LOGIN_PATH,
             api_chat_path=os.getenv("EXTERNAL_API_CHAT_PATH") or DEFAULT_CHAT_PATH,
             api_login_type=os.getenv("EXTERNAL_API_LOGIN_TYPE") or "TEACHER",
+            api_ai_students_path=(
+                os.getenv("EXTERNAL_API_AI_STUDENTS_PATH") or DEFAULT_AI_STUDENTS_PATH
+            ),
+            api_ai_latest_date_path=(
+                os.getenv("EXTERNAL_API_AI_LATEST_DATE_PATH")
+                or DEFAULT_AI_LATEST_DATE_PATH
+            ),
+            api_ai_report_path=(
+                os.getenv("EXTERNAL_API_AI_REPORT_PATH") or DEFAULT_AI_REPORT_PATH
+            ),
         )
 
 

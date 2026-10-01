@@ -9,7 +9,14 @@ from datetime import datetime
 
 import psycopg
 
-from app.models import Assignment, ScaleSession, STATUS_COMPLETED
+from app.models import (
+    SOURCE_AI_PREVIEW,
+    SOURCE_SERVICE,
+    STATUS_COMPLETED,
+    AIStudent,
+    Assignment,
+    ScaleSession,
+)
 from app.repositories import assignments as assignments_repo
 from app.repositories import evaluations as evaluations_repo
 from app.repositories import users as users_repo
@@ -39,6 +46,7 @@ class AssignmentTarget:
     session_id: str
     chat_date: str
     scale_stage: str | None = None
+    source: str = SOURCE_SERVICE
 
 
 @dataclass(frozen=True)
@@ -91,6 +99,33 @@ def build_targets(sessions: list[ScaleSession]) -> list[AssignmentTarget]:
     return targets
 
 
+def build_ai_targets(students: list[AIStudent]) -> list[AssignmentTarget]:
+    """AI 테스트 학생을 할당 대상으로 바꾼다 — **학생 1명당 1건**.
+
+    실제 사용자 데이터와 다른 점: 척도검사 목록을 주는 API 가 없어서
+    세션 ID 와 날짜를 미리 알 수 없다. 둘 다 비워 두고 만든 뒤,
+    전문의가 할당을 열 때 `latest-date` API 로 최신 날짜를 받아 채운다.
+
+    같은 학생이 두 번 들어와도 한 번만 만든다.
+    """
+    targets: list[AssignmentTarget] = []
+    seen: set[str] = set()
+    for student in students:
+        if not student.student_id or student.student_id in seen:
+            continue
+        seen.add(student.student_id)
+        targets.append(
+            AssignmentTarget(
+                student_id=student.student_id,
+                session_id="",
+                chat_date="",
+                scale_stage=None,
+                source=SOURCE_AI_PREVIEW,
+            )
+        )
+    return targets
+
+
 def create_assignments(
     conn: psycopg.Connection, doctor_id: str, targets: list[AssignmentTarget]
 ) -> tuple[list[Assignment], int]:
@@ -111,6 +146,7 @@ def create_assignments(
             target.session_id,
             target.chat_date,
             target.scale_stage,
+            target.source,
         )
         if assignment is None:
             skipped += 1
