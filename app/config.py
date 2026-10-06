@@ -38,6 +38,13 @@ DEFAULT_AI_STUDENTS_PATH = "/api-kids/dev/ai-preview/students"
 DEFAULT_AI_LATEST_DATE_PATH = "/api-kids/dev/ai-preview/latest-date"
 DEFAULT_AI_REPORT_PATH = "/api-kids/dev/ai-preview/report"
 
+# 학생의 날짜별 활동 이력 (= 척도검사 목록).
+# 정의서의 ai-preview 3종에는 없지만, 운영 관리자 화면(#teacher/ai-data-preview)이
+# 날짜별 이력을 그릴 때 쓰는 경로다. 응답 각 행이 날짜와 **실제 sessionId** 를
+# 들고 있어, 실제 사용자 데이터처럼 세션 단위로 할당할 수 있다.
+# ai-preview 전용이 아니라 위험학생 화면과 공용이다.
+DEFAULT_AI_ACTIVITY_PATH = "/api-kids/risk-students/student/activity"
+
 # 전문의 점수/조치 기본 선택지. .env 의 DOCTOR_SCORE_OPTIONS 로 덮어쓴다.
 DEFAULT_SCORE_OPTIONS = (
     "Not at all (0점)",
@@ -109,6 +116,7 @@ class Settings:
     api_ai_students_path: str = DEFAULT_AI_STUDENTS_PATH
     api_ai_latest_date_path: str = DEFAULT_AI_LATEST_DATE_PATH
     api_ai_report_path: str = DEFAULT_AI_REPORT_PATH
+    api_ai_activity_path: str = DEFAULT_AI_ACTIVITY_PATH
     scale_score_options: dict[str, tuple[str, ...]] = field(
         default_factory=lambda: dict(SCALE_SCORE_OPTIONS)
     )
@@ -132,6 +140,16 @@ class Settings:
         if not stage:
             return None
         return self.stage_to_scale.get(stage.strip().lower())
+
+    def scale_for_level(self, level: int | None) -> str | None:
+        """활동 이력의 `level` 을 척도명으로 바꾼다 (1부터 시작하는 단계 번호).
+
+        실측값: 1='스트레스', 3='우울증', 0='미분류'.
+        0 은 아직 척도가 정해지지 않은 검사라 판별하지 않는다 — 전문의가 고른다.
+        """
+        if not level or level < 1 or level > len(self.scale_stages):
+            return None
+        return self.scale_stages[level - 1]
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -183,6 +201,9 @@ class Settings:
             ),
             api_ai_report_path=(
                 os.getenv("EXTERNAL_API_AI_REPORT_PATH") or DEFAULT_AI_REPORT_PATH
+            ),
+            api_ai_activity_path=(
+                os.getenv("EXTERNAL_API_AI_ACTIVITY_PATH") or DEFAULT_AI_ACTIVITY_PATH
             ),
         )
 

@@ -194,6 +194,36 @@ class AIStudent:
 
 
 @dataclass(frozen=True)
+class AIActivity:
+    """AI 테스트 학생의 활동 이력 1건 = 척도검사 1회.
+
+    `GET /api-kids/risk-students/student/activity` 응답 한 행.
+    실제 사용자 데이터의 `ScaleSession` 과 같은 자리를 맡는다 — 날짜와
+    세션 ID 가 있어 세션 단위로 할당할 수 있다.
+
+    날짜는 원본이 이미 `YY.MM.DD` 라 대화 조회 API 에 그대로 넘긴다.
+    """
+
+    student_id: str
+    chat_date: str  # YY.MM.DD
+    session_id: str
+    level: int | None = None  # 1=스트레스 2=선별 3=우울증 0=미분류
+    level_text: str | None = None
+    concern: str | None = None
+    chat_time: str | None = None
+    scale_stage: str | None = None  # level 을 척도명으로 옮긴 값
+
+    @property
+    def label(self) -> str:
+        parts = [self.chat_date]
+        if self.level_text:
+            parts.append(self.level_text)
+        if self.concern:
+            parts.append(self.concern)
+        return " · ".join(parts)
+
+
+@dataclass(frozen=True)
 class AIPreviewDates:
     """AI 테스트 학생의 최신 데이터 날짜.
 

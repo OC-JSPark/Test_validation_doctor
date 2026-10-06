@@ -10,10 +10,13 @@ from datetime import date
 
 from app.ai_preview import (
     filter_students,
+    normalize_chat_date,
+    parse_activities,
     parse_date,
     parse_latest_date,
     parse_report,
     parse_students,
+    synthesize_session_id,
 )
 from app.models import AIPreviewDates, AIStudent
 
@@ -286,6 +289,138 @@ def test_리포트가_없으면_빈_문자열():
     assert parse_report(None) == ""
     assert parse_report({"data": None}) == ""
     assert parse_report({}) == ""
+
+
+# --- 활동 이력 (= 척도검사 목록) --------------------------------------------
+
+# 운영 관리자 화면이 쓰는 응답 형태 (실측).
+_ACTIVITY = {
+    "success": True,
+    "code": "OK",
+    "data": [
+        {
+            "date": "26.09.18",
+            "sessionId": "ef2207e1-cba7-42c8-9d1e-000000000001",
+            "level": 1,
+            "levelText": "스트레스",
+            "concern": "학교, 친구",
+            "chatTime": "131분",
+        },
+        {
+            "date": "26.09.11",
+            "sessionId": "8f1d049a-0432-4f9a-8e2b-000000000002",
+            "level": 3,
+            "levelText": "우울증",
+            "concern": "기타",
+            "chatTime": "3분",
+        },
+    ],
+}
+
+
+def _scale(level):
+    return {1: "1단계 PHQ-stress", 2: "2단계 PHQ-2", 3: "3단계 PHQ-A"}.get(level)
+
+
+def test_활동_이력을_검사_목록으로_읽는다():
+    acts = parse_activities(_ACTIVITY, "stu-1", scale_for_level=_scale)
+
+    assert len(acts) == 2
+    assert acts[0].chat_date == "26.09.18"
+    assert acts[0].session_id == "ef2207e1-cba7-42c8-9d1e-000000000001"
+    assert acts[0].concern == "학교, 친구"
+    assert all(a.student_id == "stu-1" for a in acts)
+
+
+def test_level_로_척도를_판별한다():
+    acts = parse_activities(_ACTIVITY, "stu-1", scale_for_level=_scale)
+
+    assert acts[0].scale_stage == "1단계 PHQ-stress"
+    assert acts[1].scale_stage == "3단계 PHQ-A"
+
+
+def test_미분류_검사는_척도를_비워_둔다():
+    """level 0 은 아직 척도가 정해지지 않은 검사다. 전문의가 고른다."""
+    payload = {"data": [{"date": "26.08.20", "sessionId": "s1", "level": 0}]}
+
+    assert parse_activities(payload, "stu-1", scale_for_level=_scale)[0].scale_stage is None
+
+
+def test_최신_검사가_먼저_온다():
+    acts = parse_activities(_ACTIVITY, "stu-1")
+
+    assert [a.chat_date for a in acts] == ["26.09.18", "26.09.11"]
+
+
+def test_날짜가_없는_행은_버린다():
+    """날짜가 없으면 어느 날짜 대화를 평가할지 정해지지 않는다."""
+    payload = {"data": [{"sessionId": "s1"}, {"date": "26.08.20", "sessionId": "s2"}]}
+
+    acts = parse_activities(payload, "stu-1")
+
+    assert [a.session_id for a in acts] == ["s2"]
+
+
+def test_같은_세션이_두_번_와도_한_건():
+    payload = {"data": [_ACTIVITY["data"][0], _ACTIVITY["data"][0]]}
+
+    assert len(parse_activities(payload, "stu-1")) == 1
+
+
+def test_응답이_비거나_깨져도_빈_목록():
+    assert parse_activities(None, "stu-1") == []
+    assert parse_activities({"data": None}, "stu-1") == []
+    assert parse_activities({"data": "문자열"}, "stu-1") == []
+    assert parse_activities({"data": [None, 3]}, "stu-1") == []
+
+
+def test_네자리_연도_날짜를_두자리로_맞춘다():
+    """대화 조회 API 는 `26.08.20` 형식을 받는다."""
+    assert normalize_chat_date("2026.08.20") == "26.08.20"
+    assert normalize_chat_date("26.08.20") == "26.08.20"
+    assert normalize_chat_date("2026-08-20") == "26.08.20"
+    assert normalize_chat_date("어제") == ""
+    assert normalize_chat_date(None) == ""
+
+
+# --- 세션 ID 가 없을 때 --------------------------------------------------------
+
+
+def test_세션ID_가_없으면_만들어_채운다():
+    payload = {"data": [{"date": "26.08.20", "sessionId": None}]}
+
+    session_id = parse_activities(payload, "stu-1")[0].session_id
+
+    assert session_id
+    assert len(session_id) == 36  # 기존 세션과 같은 UUID 모양이라 화면에서 튀지 않는다
+    assert session_id.count("-") == 4
+
+
+def test_만들어낸_세션ID_는_매번_같다():
+    """난수로 만들면 같은 검사를 다시 할당할 때마다 새 ID 가 나와,
+    중복 방지 제약을 빠져나가 같은 검사가 여러 건 쌓인다."""
+    payload = {"data": [{"date": "26.08.20"}]}
+
+    first = parse_activities(payload, "stu-1")[0].session_id
+    second = parse_activities(payload, "stu-1")[0].session_id
+
+    assert first == second
+    assert first == synthesize_session_id("stu-1", "26.08.20")
+
+
+def test_학생과_날짜가_다르면_다른_세션ID():
+    a = synthesize_session_id("stu-1", "26.08.20")
+    b = synthesize_session_id("stu-2", "26.08.20")
+    c = synthesize_session_id("stu-1", "26.08.21")
+
+    assert len({a, b, c}) == 3
+
+
+def test_실제_세션ID_가_있으면_그것을_쓴다():
+    """원본과 대조할 수 있는 진짜 ID 가 있으면 만들어낸 값으로 덮지 않는다."""
+    acts = parse_activities(_ACTIVITY, "stu-1")
+
+    assert acts[0].session_id == "ef2207e1-cba7-42c8-9d1e-000000000001"
 
 
 def test_AIStudent_를_직접_만들_수도_있다():

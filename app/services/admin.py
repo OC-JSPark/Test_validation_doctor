@@ -13,7 +13,7 @@ from app.models import (
     SOURCE_AI_PREVIEW,
     SOURCE_SERVICE,
     STATUS_COMPLETED,
-    AIStudent,
+    AIActivity,
     Assignment,
     ScaleSession,
 )
@@ -99,27 +99,30 @@ def build_targets(sessions: list[ScaleSession]) -> list[AssignmentTarget]:
     return targets
 
 
-def build_ai_targets(students: list[AIStudent]) -> list[AssignmentTarget]:
-    """AI 테스트 학생을 할당 대상으로 바꾼다 — **학생 1명당 1건**.
+def build_ai_targets(activities: list[AIActivity]) -> list[AssignmentTarget]:
+    """AI 테스트 학생의 활동 이력을 할당 대상으로 바꾼다 — **검사 1회당 1건**.
 
-    실제 사용자 데이터와 다른 점: 척도검사 목록을 주는 API 가 없어서
-    세션 ID 와 날짜를 미리 알 수 없다. 둘 다 비워 두고 만든 뒤,
-    전문의가 할당을 열 때 `latest-date` API 로 최신 날짜를 받아 채운다.
+    실제 사용자 데이터(`build_targets`)와 같은 규칙이다. 학생을 고르면 그 학생이
+    실시한 척도검사가 전부 할당 대상이 되고, 날짜·세션 ID 는 각 검사에서 나온다.
+    다른 점은 출처(`AI_PREVIEW`)뿐이다.
 
-    같은 학생이 두 번 들어와도 한 번만 만든다.
+    중복 조합은 순서를 유지한 채 한 번만 남긴다.
     """
     targets: list[AssignmentTarget] = []
-    seen: set[str] = set()
-    for student in students:
-        if not student.student_id or student.student_id in seen:
+    seen: set[tuple[str, str, str]] = set()
+    for activity in activities:
+        if not activity.student_id or not activity.chat_date:
             continue
-        seen.add(student.student_id)
+        key = (activity.student_id, activity.session_id, activity.chat_date)
+        if key in seen:
+            continue
+        seen.add(key)
         targets.append(
             AssignmentTarget(
-                student_id=student.student_id,
-                session_id="",
-                chat_date="",
-                scale_stage=None,
+                student_id=activity.student_id,
+                session_id=activity.session_id,
+                chat_date=activity.chat_date,
+                scale_stage=activity.scale_stage,
                 source=SOURCE_AI_PREVIEW,
             )
         )

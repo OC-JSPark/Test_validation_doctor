@@ -11,6 +11,7 @@ from app.external_api import ExternalAPIError
 from app.models import (
     SOURCE_AI_PREVIEW,
     SOURCE_SERVICE,
+    AIActivity,
     AIStudent,
     Assignment,
     ScaleSession,
@@ -375,33 +376,110 @@ def _render_assign() -> None:
         _render_service_assign(doctor_id)
 
 
+@st.cache_data(ttl=300, show_spinner="활동 이력을 불러오는 중…")
+def _load_ai_activities(student_id: str) -> list[AIActivity]:
+    """한 AI 학생의 날짜별 활동 이력 (= 척도검사 목록).
+
+    실제 사용자 데이터의 `session_directory.list_sessions()` 와 같은 자리다.
+    학생 수만큼 API 를 부르므로 학생 단위로 캐시한다.
+    """
+    return chat_client().fetch_ai_activities(student_id)
+
+
 def _render_ai_assign(doctor_id: str) -> None:
-    """AI DB 에만 있는 테스트용 데이터 할당."""
+    """AI DB 에만 있는 테스트용 데이터 할당.
+
+    실제 사용자 데이터와 같은 규칙으로 돈다 — 학생을 고르면 그 학생이 실시한
+    척도검사가 **전부** 날짜·세션 단위로 할당된다.
+    """
     st.caption(
         "AI 가 만든 테스트용 데이터입니다. 실제 사용자 명부에는 없습니다. "
-        "검사 날짜는 전문의가 평가를 열 때 최신 날짜로 자동 설정됩니다."
+        "학생을 고르면 그 학생의 척도검사가 날짜별로 모두 할당됩니다."
     )
 
     st.markdown("#### 학생 선택")
     students = _render_ai_student_picker()
-    targets = admin_service.build_ai_targets(students)
+    if not students:
+        st.caption("생성될 작업: **0건**")
+        _render_create_button(doctor_id, [], key="admin_create_ai")
+        return
 
-    if students:
-        st.dataframe(
-            [
-                {
-                    "표시 번호": s.tag,
-                    "학생 ID": s.student_id,
-                    "단계": s.level_text or "-",
-                }
-                for s in students
-            ],
-            width="stretch",
-            hide_index=True,
+    activities: list[AIActivity] = []
+    failed: list[str] = []
+    for student in students:
+        try:
+            activities.extend(_load_ai_activities(student.student_id))
+        except ExternalAPIError:
+            failed.append(student.tag)
+
+    if failed:
+        st.warning(
+            f"{len(failed)}명의 활동 이력을 가져오지 못했습니다: {', '.join(failed)}"
         )
 
-    st.caption(f"생성될 작업: **{len(targets)}건** (학생 1명당 1건)")
+    targets = admin_service.build_ai_targets(activities)
+    _render_ai_summary(students, activities)
+
+    st.caption(f"생성될 작업: **{len(targets)}건**")
     _render_create_button(doctor_id, targets, key="admin_create_ai")
+
+
+def _render_ai_summary(students: list[AIStudent], activities: list[AIActivity]) -> None:
+    """학생별 검사 건수와, 이력이 없는 학생을 알려준다 (실사용 흐름과 같은 모양)."""
+    by_student: dict[str, list[AIActivity]] = {}
+    for activity in activities:
+        by_student.setdefault(activity.student_id, []).append(activity)
+
+    st.dataframe(
+        [
+            {
+                "표시 번호": s.tag,
+                "학생 ID": s.student_id,
+                "척도검사 수": len(by_student.get(s.student_id, [])),
+                "최초 검사일": min(
+                    (a.chat_date for a in by_student[s.student_id]), default="-"
+                )
+                if s.student_id in by_student
+                else "-",
+                "최종 검사일": max(
+                    (a.chat_date for a in by_student[s.student_id]), default="-"
+                )
+                if s.student_id in by_student
+                else "-",
+                "척도 판별됨": sum(
+                    1 for a in by_student.get(s.student_id, []) if a.scale_stage
+                ),
+            }
+            for s in students
+        ],
+        width="stretch",
+        hide_index=True,
+    )
+
+    empty = [s.tag for s in students if s.student_id not in by_student]
+    if empty:
+        st.warning(
+            f"{len(empty)}명은 활동 이력이 없어 할당되지 않습니다: {', '.join(empty)}"
+        )
+
+    if activities:
+        with st.expander(f"할당될 척도검사 {len(activities)}건 보기"):
+            tags = {s.student_id: s.tag for s in students}
+            st.dataframe(
+                [
+                    {
+                        "표시 번호": tags.get(a.student_id, "-"),
+                        "날짜": a.chat_date,
+                        "세션 ID": a.session_id,
+                        "척도": a.scale_stage or "(미분류)",
+                        "고민": a.concern or "-",
+                        "대화 시간": a.chat_time or "-",
+                    }
+                    for a in activities
+                ],
+                width="stretch",
+                hide_index=True,
+            )
 
 
 def _render_service_assign(doctor_id: str) -> None:

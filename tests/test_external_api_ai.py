@@ -11,6 +11,7 @@ import pytest
 import responses
 
 from app.config import (
+    DEFAULT_AI_ACTIVITY_PATH,
     DEFAULT_AI_LATEST_DATE_PATH,
     DEFAULT_AI_REPORT_PATH,
     DEFAULT_AI_STUDENTS_PATH,
@@ -22,6 +23,7 @@ BASE_URL = "https://dev.aimie-m.test"
 STUDENTS_URL = f"{BASE_URL}{DEFAULT_AI_STUDENTS_PATH}"
 LATEST_DATE_URL = f"{BASE_URL}{DEFAULT_AI_LATEST_DATE_PATH}"
 REPORT_URL = f"{BASE_URL}{DEFAULT_AI_REPORT_PATH}"
+ACTIVITY_URL = f"{BASE_URL}{DEFAULT_AI_ACTIVITY_PATH}"
 LOGIN_URL = f"{BASE_URL}{LOGIN_PATH}"
 
 
@@ -121,6 +123,62 @@ def test_인증헤더가_붙는다(settings, students_payload):
     client.fetch_ai_students()
 
     assert responses.calls[0].request.headers["Authorization"] == "Bearer tok-abc"
+
+
+# --- 활동 이력 (= 척도검사 목록) --------------------------------------------
+
+
+@responses.activate
+def test_활동_이력을_가져온다(settings):
+    responses.add(
+        responses.GET,
+        ACTIVITY_URL,
+        json={
+            "success": True,
+            "data": [
+                {
+                    "date": "26.09.18",
+                    "sessionId": "ef2207e1-cba7-42c8-9d1e-000000000001",
+                    "level": 1,
+                    "levelText": "스트레스",
+                    "concern": "학교, 친구",
+                    "chatTime": "131분",
+                },
+                {"date": "26.09.11", "sessionId": "s2", "level": 3},
+            ],
+        },
+        status=200,
+    )
+    client = ChatAPIClient(settings, token="tok")
+
+    acts = client.fetch_ai_activities("stu-1")
+
+    assert [a.chat_date for a in acts] == ["26.09.18", "26.09.11"]
+    assert acts[0].session_id == "ef2207e1-cba7-42c8-9d1e-000000000001"
+    assert "studentId=stu-1" in responses.calls[0].request.url
+
+
+@responses.activate
+def test_설정의_척도_단계로_판별한다(settings):
+    """척도명은 .env 로 덮어쓸 수 있다. 클라이언트가 그 설정을 따라야 한다."""
+    responses.add(
+        responses.GET,
+        ACTIVITY_URL,
+        json={"data": [{"date": "26.09.18", "sessionId": "s1", "level": 1}]},
+        status=200,
+    )
+    client = ChatAPIClient(settings, token="tok")
+
+    assert client.fetch_ai_activities("stu-1")[0].scale_stage == "1단계"
+
+
+@responses.activate
+def test_이력이_없는_학생도_예외가_아니다(settings):
+    """활동 이력이 없는 학생이 있다. 할당 대상에서 빠질 뿐이다."""
+    responses.add(responses.GET, ACTIVITY_URL, json={"data": []}, status=200)
+    client = ChatAPIClient(settings, token="tok")
+
+    assert client.fetch_ai_activities("stu-1") == []
 
 
 # --- 최신 날짜 --------------------------------------------------------------

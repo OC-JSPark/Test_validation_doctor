@@ -14,8 +14,8 @@ import pytest
 from app.models import (
     SOURCE_AI_PREVIEW,
     SOURCE_SERVICE,
+    AIActivity,
     AIPreviewDates,
-    AIStudent,
     QATurn,
 )
 from app.repositories import assignments as assignments_repo
@@ -51,71 +51,89 @@ def turns() -> list[QATurn]:
 
 
 @pytest.fixture
-def ai_students() -> list[AIStudent]:
+def ai_activities() -> list[AIActivity]:
+    """한 학생이 세 날짜에 검사를 받은 이력."""
     return [
-        AIStudent(student_id="ai-stu-1", seq=1, source_id=1),
-        AIStudent(student_id="ai-stu-2", seq=2, source_id=2),
+        AIActivity(
+            student_id="ai-stu-1",
+            chat_date="26.09.18",
+            session_id="sess-c",
+            level=1,
+            scale_stage="1단계 PHQ-stress",
+        ),
+        AIActivity(
+            student_id="ai-stu-1",
+            chat_date="26.09.11",
+            session_id="sess-b",
+            level=3,
+            scale_stage="3단계 PHQ-A",
+        ),
+        AIActivity(student_id="ai-stu-2", chat_date="26.08.20", session_id="sess-a"),
     ]
 
 
 # --- 관리자: 할당 생성 -------------------------------------------------------
 
 
-def test_AI_학생은_1명당_할당_1건(ai_students):
-    """척도검사 목록 API 가 없어 세션별로 쪼갤 수 없다."""
-    targets = admin_service.build_ai_targets(ai_students)
+def test_검사_1회당_할당_1건(ai_activities):
+    """실제 사용자 데이터와 같은 규칙. 학생 1명당 1건이 아니다."""
+    targets = admin_service.build_ai_targets(ai_activities)
 
-    assert len(targets) == 2
-    assert [t.student_id for t in targets] == ["ai-stu-1", "ai-stu-2"]
-
-
-def test_AI_할당은_세션과_날짜가_비어있다(ai_students):
-    """전문의가 열 때 latest-date 로 채운다."""
-    target = admin_service.build_ai_targets(ai_students)[0]
-
-    assert target.session_id == ""
-    assert target.chat_date == ""
-    assert target.scale_stage is None
+    assert len(targets) == 3
+    assert [t.student_id for t in targets] == ["ai-stu-1", "ai-stu-1", "ai-stu-2"]
 
 
-def test_AI_할당에_출처가_표시된다(ai_students):
-    assert all(t.source == SOURCE_AI_PREVIEW for t in admin_service.build_ai_targets(ai_students))
+def test_날짜와_세션ID_가_할당에_실린다(ai_activities):
+    """전문의 화면에 '(전체)' 가 아니라 실제 값이 보여야 한다."""
+    target = admin_service.build_ai_targets(ai_activities)[0]
+
+    assert target.session_id == "sess-c"
+    assert target.chat_date == "26.09.18"
+    assert target.scale_stage == "1단계 PHQ-stress"
 
 
-def test_같은_학생이_두_번_들어와도_한_건():
-    students = [
-        AIStudent(student_id="dup", seq=1),
-        AIStudent(student_id="dup", seq=2),
+def test_AI_할당에_출처가_표시된다(ai_activities):
+    targets = admin_service.build_ai_targets(ai_activities)
+
+    assert all(t.source == SOURCE_AI_PREVIEW for t in targets)
+
+
+def test_같은_검사가_두_번_들어와도_한_건(ai_activities):
+    doubled = ai_activities + ai_activities
+
+    assert len(admin_service.build_ai_targets(doubled)) == 3
+
+
+def test_날짜가_없는_행은_건너뛴다():
+    """날짜가 없으면 전문의가 어느 날짜 대화를 볼지 정해지지 않는다."""
+    activities = [
+        AIActivity(student_id="ok", chat_date="", session_id="s1"),
+        AIActivity(student_id="ok", chat_date="26.08.20", session_id="s2"),
     ]
 
-    assert len(admin_service.build_ai_targets(students)) == 1
+    assert [t.session_id for t in admin_service.build_ai_targets(activities)] == ["s2"]
 
 
-def test_학생ID_가_비면_건너뛴다():
-    students = [AIStudent(student_id="", seq=1), AIStudent(student_id="ok", seq=2)]
-
-    assert [t.student_id for t in admin_service.build_ai_targets(students)] == ["ok"]
-
-
-def test_AI_할당이_DB_에_저장된다(conn, doctor, ai_students):
-    targets = admin_service.build_ai_targets(ai_students)
+def test_AI_할당이_DB_에_저장된다(conn, doctor, ai_activities):
+    targets = admin_service.build_ai_targets(ai_activities)
 
     created, skipped = admin_service.create_assignments(conn, doctor.user_id, targets)
 
-    assert len(created) == 2
+    assert len(created) == 3
     assert skipped == 0
     assert all(a.source == SOURCE_AI_PREVIEW for a in created)
     assert all(a.is_ai_preview for a in created)
+    assert {a.chat_date for a in created} == {"26.09.18", "26.09.11", "26.08.20"}
 
 
-def test_중복_할당은_건너뛴다(conn, doctor, ai_students):
-    targets = admin_service.build_ai_targets(ai_students)
+def test_중복_할당은_건너뛴다(conn, doctor, ai_activities):
+    targets = admin_service.build_ai_targets(ai_activities)
     admin_service.create_assignments(conn, doctor.user_id, targets)
 
     created, skipped = admin_service.create_assignments(conn, doctor.user_id, targets)
 
     assert created == []
-    assert skipped == 2
+    assert skipped == 3
 
 
 def test_기존_할당은_SERVICE_로_남는다(conn, doctor):

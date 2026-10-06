@@ -10,9 +10,14 @@ from typing import Any
 
 import requests
 
-from app.ai_preview import parse_latest_date, parse_report, parse_students
+from app.ai_preview import (
+    parse_activities,
+    parse_latest_date,
+    parse_report,
+    parse_students,
+)
 from app.config import DEFAULT_CHAT_PATH, DEFAULT_LOGIN_PATH, Settings, get_settings
-from app.models import AIPreviewDates, AIStudent, QATurn
+from app.models import AIActivity, AIPreviewDates, AIStudent, QATurn
 from app.parsing import parse_chat_payload
 
 # 기본 경로. 실제 사용 경로는 Settings 에서 읽으며 환경변수로 덮어쓸 수 있다.
@@ -133,6 +138,20 @@ class ChatAPIClient:
         if search and search.strip():
             params["search"] = search.strip()
         return parse_students(self._get(self.settings.api_ai_students_path, params))
+
+    def fetch_ai_activities(self, student_id: str) -> list[AIActivity]:
+        """그 학생의 날짜별 활동 이력 = 척도검사 목록.
+
+        실제 사용자 데이터에서 `session_directory.list_sessions()` 가 맡는 자리다.
+        각 행이 날짜와 실제 세션 ID 를 들고 있어, 세션 단위로 할당할 수 있다.
+
+        척도는 `level` 로 판별한다 (1=스트레스, 2=선별, 3=우울증).
+        """
+        return parse_activities(
+            self._get(self.settings.api_ai_activity_path, {"studentId": student_id}),
+            student_id,
+            scale_for_level=self.settings.scale_for_level,
+        )
 
     def fetch_ai_latest_date(self, student_id: str) -> AIPreviewDates:
         """그 학생의 가장 최신 데이터 날짜 (chatDate / reportDate).

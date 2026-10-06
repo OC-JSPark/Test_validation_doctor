@@ -19,6 +19,7 @@ from streamlit.testing.v1 import AppTest
 
 from app.config import get_settings
 from app.models import (
+    AIActivity,
     SOURCE_AI_PREVIEW,
     ROLE_ADMIN,
     ROLE_DOCTOR,
@@ -47,9 +48,40 @@ class _FakeAIClient:
         )
         self.report = "1. 정신건강 점수 분석\n- 스트레스 점수는 0.0점"
         self.date_calls: list[str] = []
+        self.activity_calls: list[str] = []
+        # ai-stu-1 은 두 날짜, ai-stu-2 는 한 날짜에 검사를 받았다.
+        self.activities = {
+            "ai-stu-1": [
+                AIActivity(
+                    student_id="ai-stu-1",
+                    chat_date="26.09.18",
+                    session_id="sess-a",
+                    level=1,
+                    level_text="스트레스",
+                    scale_stage="1단계 PHQ-stress",
+                ),
+                AIActivity(
+                    student_id="ai-stu-1",
+                    chat_date="26.09.11",
+                    session_id="sess-b",
+                    level=3,
+                    level_text="우울증",
+                    scale_stage="3단계 PHQ-A",
+                ),
+            ],
+            "ai-stu-2": [
+                AIActivity(
+                    student_id="ai-stu-2", chat_date="26.08.20", session_id="sess-c"
+                )
+            ],
+        }
 
     def fetch_ai_students(self, *, mode="all", search=None):
         return list(self.students)
+
+    def fetch_ai_activities(self, student_id):
+        self.activity_calls.append(student_id)
+        return list(self.activities.get(student_id, []))
 
     def fetch_ai_latest_date(self, student_id):
         self.date_calls.append(student_id)
@@ -165,7 +197,10 @@ def test_선택_목록에_말머리가_노출된다(ui_admin, fake_ai):
     assert options[1].startswith("[AIuser02]")
 
 
-def test_AI_학생을_골라_할당한다(committed_conn, ui_admin, ui_doctor, fake_ai):
+def test_학생을_고르면_날짜별_검사가_모두_할당된다(
+    committed_conn, ui_admin, ui_doctor, fake_ai
+):
+    """실제 사용자 데이터와 같은 규칙 — 학생 1명당 1건이 아니라 검사 1회당 1건."""
     conn, _ = committed_conn
     at = _login(ui_admin, "pw1234")
     _radio(at, "데이터 출처").set_value(SOURCE_AI_PREVIEW).run()
@@ -179,10 +214,66 @@ def test_AI_학생을_골라_할당한다(committed_conn, ui_admin, ui_doctor, f
 
     assert not at.exception
     saved = assignments_repo.list_assignments(conn, doctor_id=ui_doctor)
-    assert len(saved) == 2
+    # ai-stu-1 이 2건, ai-stu-2 가 1건
+    assert len(saved) == 3
     assert all(a.is_ai_preview for a in saved)
-    # 세션·날짜는 비어 있다 (전문의가 열 때 채워진다)
-    assert all(a.session_id == "" and a.chat_date == "" for a in saved)
+    assert {(a.student_id, a.chat_date, a.session_id) for a in saved} == {
+        ("ai-stu-1", "26.09.18", "sess-a"),
+        ("ai-stu-1", "26.09.11", "sess-b"),
+        ("ai-stu-2", "26.08.20", "sess-c"),
+    }
+
+
+def test_판별된_척도가_할당에_실린다(committed_conn, ui_admin, ui_doctor, fake_ai):
+    conn, _ = committed_conn
+    at = _login(ui_admin, "pw1234")
+    _radio(at, "데이터 출처").set_value(SOURCE_AI_PREVIEW).run()
+    at.selectbox[0].set_value(ui_doctor).run()
+    next(m for m in at.multiselect if m.label == "AI 테스트 학생 선택").set_value(
+        ["ai-stu-1"]
+    ).run()
+    next(b for b in at.button if b.label == "작업 생성").click().run()
+
+    saved = assignments_repo.list_assignments(conn, doctor_id=ui_doctor)
+    by_date = {a.chat_date: a.scale_stage for a in saved}
+
+    assert by_date["26.09.18"] == "1단계 PHQ-stress"
+    assert by_date["26.09.11"] == "3단계 PHQ-A"
+
+
+def test_선택한_학생의_검사_목록이_보인다(ui_admin, fake_ai):
+    """관리자가 무엇이 할당될지 생성 전에 확인할 수 있어야 한다."""
+    at = _login(ui_admin, "pw1234")
+    _radio(at, "데이터 출처").set_value(SOURCE_AI_PREVIEW).run()
+    next(m for m in at.multiselect if m.label == "AI 테스트 학생 선택").set_value(
+        ["ai-stu-1"]
+    ).run()
+
+    assert not at.exception
+    assert fake_ai.activity_calls == ["ai-stu-1"]
+    # 관리자 화면에는 표가 여럿이다 (진도율·할당 현황·요약·상세).
+    # 상세 표는 '표시 번호' 와 '세션 ID' 를 함께 가진 것뿐이다.
+    detail = next(
+        df
+        for df in at.dataframe
+        if {"표시 번호", "세션 ID"} <= set(getattr(df.value, "columns", []))
+    )
+    assert set(detail.value["날짜"]) == {"26.09.18", "26.09.11"}
+    assert set(detail.value["세션 ID"]) == {"sess-a", "sess-b"}
+    assert set(detail.value["척도"]) == {"1단계 PHQ-stress", "3단계 PHQ-A"}
+
+
+def test_이력이_없는_학생은_할당되지_않는다(ui_admin, fake_ai):
+    fake_ai.activities["ai-stu-2"] = []
+    at = _login(ui_admin, "pw1234")
+    _radio(at, "데이터 출처").set_value(SOURCE_AI_PREVIEW).run()
+    next(m for m in at.multiselect if m.label == "AI 테스트 학생 선택").set_value(
+        ["ai-stu-2"]
+    ).run()
+
+    assert not at.exception
+    assert any("활동 이력이 없어" in w.value for w in at.warning)
+    assert next(b for b in at.button if b.label == "작업 생성").disabled
 
 
 def test_선택_전에는_작업_생성이_비활성(ui_admin, fake_ai):
@@ -233,8 +324,36 @@ def test_API_가_죽어도_화면은_뜬다(ui_admin, monkeypatch):
 # --- 전문의 화면 ------------------------------------------------------------
 
 
-def test_날짜가_조용히_자동으로_세팅된다(committed_conn, ui_doctor, fake_ai):
-    """전문의는 날짜를 고르지 않는다. 뒤에서 최신 날짜로 조회된다."""
+def test_작업_목록에_실제_날짜와_세션ID_가_보인다(committed_conn, ui_doctor, fake_ai):
+    """'(전체)' 가 아니라 그 검사의 날짜와 세션 ID 가 떠야 한다."""
+    conn, _ = committed_conn
+    assignments_repo.create_assignment(
+        conn, ui_doctor, "ai-stu-1", "sess-a", "26.09.18", None, SOURCE_AI_PREVIEW
+    )
+
+    at = _login(ui_doctor, "pw1234")
+
+    assert not at.exception
+    row = at.dataframe[0].value
+    assert list(row["날짜"]) == ["26.09.18"]
+    assert list(row["세션 ID"]) == ["sess-a"]
+    # 날짜가 이미 있으니 latest-date 를 부를 일이 없다
+    assert fake_ai.date_calls == []
+
+
+def test_평가_화면에도_날짜가_그대로_뜬다(committed_conn, ui_doctor, fake_ai):
+    conn, _ = committed_conn
+    assignments_repo.create_assignment(
+        conn, ui_doctor, "ai-stu-1", "sess-a", "26.09.18", None, SOURCE_AI_PREVIEW
+    )
+
+    at = _login(ui_doctor, "pw1234")
+
+    assert any("26.09.18" in c.value and "sess-a" in c.value for c in at.caption)
+
+
+def test_날짜가_없는_옛_할당은_자동으로_채워진다(committed_conn, ui_doctor, fake_ai):
+    """활동 이력이 없어 날짜 없이 만들어진 할당의 안전망."""
     conn, _ = committed_conn
     created = assignments_repo.create_assignment(
         conn, ui_doctor, "ai-stu-1", "", "", None, SOURCE_AI_PREVIEW
