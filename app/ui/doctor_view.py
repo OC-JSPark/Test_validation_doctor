@@ -7,7 +7,7 @@ import streamlit as st
 
 from app.config import get_settings
 from app.external_api import ExternalAPIError
-from app.models import STATUS_COMPLETED, UNSET, Assignment, User
+from app.models import STATUS_COMPLETED, UNSET, Assignment, User, status_label
 from app.services import doctor as doctor_service
 from app.services.doctor import AssignmentLocked, EvaluationSet
 from app.ui.common import chat_client, connection, progress_bar
@@ -87,7 +87,10 @@ def _render_todo_list(assignments: list[Assignment]) -> int | None:
     )
 
     labels = {
-        a.id: f"#{a.id} · {a.student_id[:12]}… · {a.status} ({a.completed_turns}/{a.total_turns})"
+        a.id: (
+            f"#{a.id} · {a.student_id[:12]}… · {status_label(a.status)} "
+            f"({a.completed_turns}/{a.total_turns})"
+        )
         for a in assignments
     }
     selected = st.selectbox(
@@ -342,3 +345,5 @@ def _render_evaluation(evaluation_set: EvaluationSet) -> None:
         st.caption(
             f"미입력 턴 {remaining}개가 남아 있어 [최종 완료] 가 비활성화되어 있습니다."
         )
+
+

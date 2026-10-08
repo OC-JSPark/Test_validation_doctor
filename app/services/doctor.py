@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import psycopg
 
 from app.external_api import ChatAPIClient
-from app.models import UNSET, Assignment, Evaluation, _Unset
+from app.models import UNSET, Assignment, Evaluation, _Unset, status_label
 from app.repositories import assignments as assignments_repo
 from app.repositories import evaluations as evaluations_repo
 
@@ -52,7 +52,7 @@ def build_todo_rows(
             "날짜": a.chat_date or "(전체)",
             "진행": f"{a.completed_turns}/{a.total_turns}",
             "진행률(%)": a.progress_pct,
-            "상태": a.status,
+            "상태": status_label(a.status),
         }
         for a in assignments
     ]

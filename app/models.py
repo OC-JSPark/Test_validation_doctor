@@ -39,6 +39,25 @@ STATUS_PENDING = "PENDING"
 STATUS_IN_PROGRESS = "IN_PROGRESS"
 STATUS_COMPLETED = "COMPLETED"
 
+# 화면에 보여줄 상태 이름. **저장값은 위 영문 상수 그대로다** —
+# DB 의 CHECK 제약과 이미 쌓인 행이 영문을 쓰므로 표시만 바꾼다.
+STATUS_LABELS = {
+    STATUS_PENDING: "시작전",
+    STATUS_IN_PROGRESS: "진행중",
+    STATUS_COMPLETED: "완료",
+}
+
+
+def status_label(status: str | None) -> str:
+    """상태를 화면용 이름으로. 모르는 값은 원본을 그대로 돌려준다.
+
+    상태가 늘어났을 때 화면에서 조용히 사라지는 것보다, 낯선 값이라도
+    보이는 편이 낫다.
+    """
+    if not status:
+        return ""
+    return STATUS_LABELS.get(status.strip().upper(), status)
+
 # 할당의 데이터 출처.
 #   SERVICE    — 실제 사용자 데이터. 학생 명부 DB + 척도검사 DB 에서 고른다.
 #   AI_PREVIEW — AI DB 에만 있는 테스트용 생성 데이터.

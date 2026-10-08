@@ -95,7 +95,7 @@ def test_기존_열이_그대로_유지된다():
     assert row["날짜"] == "26.08.31"
     assert row["진행"] == "3/10"
     assert row["진행률(%)"] == 30.0
-    assert row["상태"] == STATUS_IN_PROGRESS
+    assert row["상태"] == "진행중"  # 저장값은 IN_PROGRESS, 화면만 한글
 
 
 def test_비어있는_세션과_날짜는_전체로_표시된다():
@@ -123,7 +123,20 @@ def test_완료된_작업도_선택하면_강조된다():
     rows = build_todo_rows([_assignment(1, STATUS_COMPLETED)], selected_id=1)
 
     assert rows[0][""] == SELECTED_MARKER
-    assert rows[0]["상태"] == STATUS_COMPLETED
+    assert rows[0]["상태"] == "완료"
+
+
+def test_상태가_한글로_보인다():
+    """전문의 화면에는 PENDING 같은 영문 저장값이 보이면 안 된다."""
+    assignments = [
+        _assignment(1, STATUS_PENDING),
+        _assignment(2, STATUS_IN_PROGRESS),
+        _assignment(3, STATUS_COMPLETED),
+    ]
+
+    rows = build_todo_rows(assignments, selected_id=None)
+
+    assert [r["상태"] for r in rows] == ["시작전", "진행중", "완료"]
 
 
 # --- 표 서식 ---------------------------------------------------------------
