@@ -9,7 +9,14 @@ from datetime import datetime
 
 import psycopg
 
-from app.models import Assignment, ScaleSession, STATUS_COMPLETED
+from app.models import (
+    SOURCE_AI_PREVIEW,
+    SOURCE_SERVICE,
+    STATUS_COMPLETED,
+    AIActivity,
+    Assignment,
+    ScaleSession,
+)
 from app.repositories import assignments as assignments_repo
 from app.repositories import evaluations as evaluations_repo
 from app.repositories import users as users_repo
@@ -39,6 +46,7 @@ class AssignmentTarget:
     session_id: str
     chat_date: str
     scale_stage: str | None = None
+    source: str = SOURCE_SERVICE
 
 
 @dataclass(frozen=True)
@@ -91,6 +99,36 @@ def build_targets(sessions: list[ScaleSession]) -> list[AssignmentTarget]:
     return targets
 
 
+def build_ai_targets(activities: list[AIActivity]) -> list[AssignmentTarget]:
+    """AI 테스트 학생의 활동 이력을 할당 대상으로 바꾼다 — **검사 1회당 1건**.
+
+    실제 사용자 데이터(`build_targets`)와 같은 규칙이다. 학생을 고르면 그 학생이
+    실시한 척도검사가 전부 할당 대상이 되고, 날짜·세션 ID 는 각 검사에서 나온다.
+    다른 점은 출처(`AI_PREVIEW`)뿐이다.
+
+    중복 조합은 순서를 유지한 채 한 번만 남긴다.
+    """
+    targets: list[AssignmentTarget] = []
+    seen: set[tuple[str, str, str]] = set()
+    for activity in activities:
+        if not activity.student_id or not activity.chat_date:
+            continue
+        key = (activity.student_id, activity.session_id, activity.chat_date)
+        if key in seen:
+            continue
+        seen.add(key)
+        targets.append(
+            AssignmentTarget(
+                student_id=activity.student_id,
+                session_id=activity.session_id,
+                chat_date=activity.chat_date,
+                scale_stage=activity.scale_stage,
+                source=SOURCE_AI_PREVIEW,
+            )
+        )
+    return targets
+
+
 def create_assignments(
     conn: psycopg.Connection, doctor_id: str, targets: list[AssignmentTarget]
 ) -> tuple[list[Assignment], int]:
@@ -111,6 +149,7 @@ def create_assignments(
             target.session_id,
             target.chat_date,
             target.scale_stage,
+            target.source,
         )
         if assignment is None:
             skipped += 1
