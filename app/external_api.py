@@ -10,8 +10,14 @@ from typing import Any
 
 import requests
 
+from app.ai_preview import (
+    parse_activities,
+    parse_latest_date,
+    parse_report,
+    parse_students,
+)
 from app.config import DEFAULT_CHAT_PATH, DEFAULT_LOGIN_PATH, Settings, get_settings
-from app.models import QATurn
+from app.models import AIActivity, AIPreviewDates, AIStudent, QATurn
 from app.parsing import parse_chat_payload
 
 # 기본 경로. 실제 사용 경로는 Settings 에서 읽으며 환경변수로 덮어쓸 수 있다.
@@ -83,6 +89,23 @@ class ChatAPIClient:
             return self.login(self.settings.api_login_id, self.settings.api_password)
         return None
 
+    def _get(self, path: str, params: dict[str, str]) -> dict[str, Any]:
+        """인증이 필요한 GET. 토큰 만료(401) 시 한 번만 재로그인 후 재시도한다.
+
+        재시도는 **한 번뿐**이다. 자격증명 자체가 틀렸을 때 무한 재로그인에
+        빠지지 않도록, 두 번째 401 은 그대로 올린다.
+        """
+        self.ensure_token()
+        try:
+            return self._request("GET", path, params=params)
+        except ExternalAPIError as exc:
+            if exc.status_code != 401:
+                raise
+            self.token = None
+            if self._relogin() is None:
+                raise
+            return self._request("GET", path, params=params)
+
     # --- 대화 조회 ---------------------------------------------------------
     def fetch_chat(
         self, student_id: str, *, date: str | None = None, session_id: str | None = None
@@ -93,17 +116,7 @@ class ChatAPIClient:
             params["date"] = date
         if session_id:
             params["sessionId"] = session_id
-        self.ensure_token()
-        try:
-            return self._request("GET", self.settings.api_chat_path, params=params)
-        except ExternalAPIError as exc:
-            # 토큰은 만료된다. 401 이면 한 번만 재로그인 후 재시도한다.
-            if exc.status_code != 401:
-                raise
-            self.token = None
-            if self._relogin() is None:
-                raise
-            return self._request("GET", self.settings.api_chat_path, params=params)
+        return self._get(self.settings.api_chat_path, params)
 
     def fetch_turns(
         self, student_id: str, *, date: str | None = None, session_id: str | None = None
@@ -112,6 +125,56 @@ class ChatAPIClient:
         return parse_chat_payload(
             self.fetch_chat(student_id, date=date, session_id=session_id)
         )
+
+    # --- AI 테스트 데이터 --------------------------------------------------
+    # AI DB 에만 있는 생성 데이터. 대화(하루톡) 자체는 실제 데이터와 똑같이
+    # fetch_turns 로 가져오고, 아래 세 개는 목록·날짜·리포트 전용이다.
+
+    def fetch_ai_students(
+        self, *, mode: str = "all", search: str | None = None
+    ) -> list[AIStudent]:
+        """AI 테스트용 학생 목록. `mode` 는 all(기본) 또는 risk."""
+        params: dict[str, str] = {"mode": mode}
+        if search and search.strip():
+            params["search"] = search.strip()
+        return parse_students(self._get(self.settings.api_ai_students_path, params))
+
+    def fetch_ai_activities(self, student_id: str) -> list[AIActivity]:
+        """그 학생의 날짜별 활동 이력 = 척도검사 목록.
+
+        실제 사용자 데이터에서 `session_directory.list_sessions()` 가 맡는 자리다.
+        각 행이 날짜와 실제 세션 ID 를 들고 있어, 세션 단위로 할당할 수 있다.
+
+        척도는 `level` 로 판별한다 (1=스트레스, 2=선별, 3=우울증).
+        """
+        return parse_activities(
+            self._get(self.settings.api_ai_activity_path, {"studentId": student_id}),
+            student_id,
+            scale_for_level=self.settings.scale_for_level,
+        )
+
+    def fetch_ai_latest_date(self, student_id: str) -> AIPreviewDates:
+        """그 학생의 가장 최신 데이터 날짜 (chatDate / reportDate).
+
+        AI 테스트 데이터는 세션 목록 API 가 없어 관리자가 날짜를 고를 수 없다.
+        전문의가 할당을 열 때 이 값으로 조회 날짜를 정한다.
+        """
+        return parse_latest_date(
+            self._get(
+                self.settings.api_ai_latest_date_path, {"studentId": student_id}
+            )
+        )
+
+    def fetch_ai_report(
+        self, student_id: str, *, date: str | None = None, session_id: str | None = None
+    ) -> str:
+        """AI 가 생성한 분석 리포트 본문."""
+        params: dict[str, str] = {"studentId": student_id}
+        if date:
+            params["date"] = date
+        if session_id:
+            params["sessionId"] = session_id
+        return parse_report(self._get(self.settings.api_ai_report_path, params))
 
     # --- 내부 -------------------------------------------------------------
     def _headers(self) -> dict[str, str]:

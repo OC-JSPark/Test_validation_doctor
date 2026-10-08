@@ -5,6 +5,7 @@ from __future__ import annotations
 import psycopg
 
 from app.models import (
+    SOURCE_SERVICE,
     STATUS_COMPLETED,
     STATUS_IN_PROGRESS,
     STATUS_PENDING,
@@ -13,7 +14,7 @@ from app.models import (
 
 _COLUMNS = """
     a.id, a.doctor_id, a.student_id, a.session_id, a.chat_date,
-    a.total_turns, a.completed_turns, a.status, a.scale_stage,
+    a.total_turns, a.completed_turns, a.status, a.scale_stage, a.source,
     a.created_at, a.updated_at, a.completed_at
 """
 
@@ -35,6 +36,7 @@ def _to_assignment(row: dict | None) -> Assignment | None:
         updated_at=row.get("updated_at"),
         completed_at=row.get("completed_at"),
         doctor_name=row.get("doctor_name"),
+        source=row.get("source") or SOURCE_SERVICE,
     )
 
 
@@ -45,22 +47,35 @@ def create_assignment(
     session_id: str,
     chat_date: str = "",
     scale_stage: str | None = None,
+    source: str = SOURCE_SERVICE,
 ) -> Assignment | None:
     """할당 생성. 이미 같은 (전문의, 학생, 세션, 날짜) 할당이 있으면 None.
 
     관리자가 일괄 등록할 때 중복분만 조용히 건너뛰기 위한 설계다.
+
+    `source` 는 AI 테스트 데이터(`AI_PREVIEW`) 와 실제 사용자 데이터를 가른다.
+    AI 쪽은 세션·날짜를 미리 알 수 없어 빈 문자열로 들어오고, 전문의가 열 때
+    `latest-date` API 로 날짜를 채운다.
     """
     row = conn.execute(
         """
         INSERT INTO evaluation_assignments
-            (doctor_id, student_id, session_id, chat_date, status, scale_stage)
-        VALUES (%s, %s, %s, %s, %s, %s)
+            (doctor_id, student_id, session_id, chat_date, status, scale_stage, source)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (doctor_id, student_id, session_id, chat_date) DO NOTHING
         RETURNING id, doctor_id, student_id, session_id, chat_date,
-                  total_turns, completed_turns, status, scale_stage,
+                  total_turns, completed_turns, status, scale_stage, source,
                   created_at, updated_at, completed_at
         """,
-        (doctor_id, student_id, session_id, chat_date, STATUS_PENDING, scale_stage),
+        (
+            doctor_id,
+            student_id,
+            session_id,
+            chat_date,
+            STATUS_PENDING,
+            scale_stage,
+            source,
+        ),
     ).fetchone()
     return _to_assignment(row)
 
@@ -107,6 +122,43 @@ def update_total_turns(
         """,
         (total_turns, assignment_id, total_turns),
     )
+
+
+def set_chat_date(
+    conn: psycopg.Connection, assignment_id: int, chat_date: str
+) -> Assignment | None:
+    """비어 있던 조회 날짜를 채운다 (AI 테스트 할당 전용).
+
+    AI 테스트 할당은 세션 목록 API 가 없어 날짜를 비운 채 만들어진다.
+    전문의가 처음 열 때 `latest-date` 로 받은 날짜를 여기에 적어 두면
+    CSV 추출의 '검사일자' 가 빈칸으로 남지 않는다.
+
+    **이미 날짜가 있으면 건드리지 않는다.** 평가가 끝난 할당의 날짜가
+    나중에 바뀌면, 저장된 평가와 CSV 의 날짜가 어긋난다.
+
+    날짜는 유니크 제약(doctor_id, student_id, session_id, chat_date) 의 일부라
+    같은 조합이 이미 있으면 갱신하지 않는다 (제약 위반으로 트랜잭션이
+    통째로 깨지는 것을 막는다).
+    """
+    if not chat_date:
+        return get_assignment(conn, assignment_id)
+    conn.execute(
+        """
+        UPDATE evaluation_assignments a
+        SET chat_date = %s, updated_at = NOW()
+        WHERE a.id = %s
+          AND COALESCE(a.chat_date, '') = ''
+          AND NOT EXISTS (
+              SELECT 1 FROM evaluation_assignments b
+              WHERE b.doctor_id = a.doctor_id
+                AND b.student_id = a.student_id
+                AND b.session_id = a.session_id
+                AND b.chat_date = %s
+          )
+        """,
+        (chat_date, assignment_id, chat_date),
+    )
+    return get_assignment(conn, assignment_id)
 
 
 def refresh_progress(conn: psycopg.Connection, assignment_id: int) -> Assignment | None:

@@ -125,6 +125,30 @@ def test_할당이_있으면_평가_화면이_열린다(committed_conn, ui_docto
     assert any("AI 질문" in md.value for md in at.markdown)
 
 
+def test_전문의_화면에_영문_상태가_보이지_않는다(committed_conn, ui_doctor):
+    """저장값(PENDING)은 그대로 두고 화면 글자만 한글이어야 한다."""
+    conn, _ = committed_conn
+    pending = assignments_repo.create_assignment(
+        conn, ui_doctor, "stu-ko", "sess-1", "26.08.31"
+    )
+    done = assignments_repo.create_assignment(
+        conn, ui_doctor, "stu-ko", "sess-2", "26.09.01"
+    )
+    assignments_repo.mark_completed(conn, done.id)
+
+    at = _login(ui_doctor, "pw1234")
+    assert not at.exception
+
+    assert set(at.dataframe[0].value["상태"]) == {"시작전", "완료"}
+    # 작업 선택 드롭다운도 같이 바뀌어야 한다
+    assert all("PENDING" not in o and "COMPLETED" not in o for o in at.selectbox[0].options)
+    assert any("시작전" in o for o in at.selectbox[0].options)
+
+    # DB 에 저장된 값은 영문 그대로다
+    assert assignments_repo.get_assignment(conn, pending.id).status == "PENDING"
+    assert assignments_repo.get_assignment(conn, done.id).status == "COMPLETED"
+
+
 def test_선택한_작업이_목록에서_강조된다(committed_conn, ui_doctor):
     """목록이 길어져도 지금 평가 중인 건이 어느 행인지 보여야 한다."""
     conn, _ = committed_conn
